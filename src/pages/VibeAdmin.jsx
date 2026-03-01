@@ -866,6 +866,13 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             alert(`安全性攔截：${validation.error}`);
             return;
         }
+
+        if (validation.hasWarning) {
+            const confirmSave = window.confirm(`警告：${validation.warningMessage}。\n\n確定要繼續儲存嗎？`);
+            if (!confirmSave) {
+                return;
+            }
+        }
         try {
             setStatusMsg('正在儲存...');
             const docData = {

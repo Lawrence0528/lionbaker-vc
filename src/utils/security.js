@@ -4,12 +4,15 @@ export const validateHtmlCode = (html) => {
     }
 
     const forbiddenKeywords = [
+        'eval('
+    ];
+
+    const warningKeywords = [
         'document.cookie',
         'cookie',
         'localStorage',
         'sessionStorage',
-        'indexedDB',
-        'eval('
+        'indexedDB'
     ];
 
     const lowerHtml = html.toLowerCase();
@@ -23,6 +26,16 @@ export const validateHtmlCode = (html) => {
         }
     }
 
-    return { valid: true };
+    for (const keyword of warningKeywords) {
+        if (lowerHtml.includes(keyword.toLowerCase())) {
+            return {
+                valid: true,
+                hasWarning: true,
+                warningMessage: '請勿開發在本地收集敏感資訊'
+            };
+        }
+    }
+
+    return { valid: true, hasWarning: false };
 };
 
