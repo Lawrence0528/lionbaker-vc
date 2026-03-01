@@ -93,6 +93,41 @@ const INDUSTRY_TEMPLATES = {
     }
 };
 
+const INTERACTIVE_TEMPLATES = {
+    insurance_retirement: {
+        label: "🛡️ 保險 - 退休金/教育金試算器",
+        requirements: "功能：客戶輸入年齡、期望退休月花費。系統跑出精美的進度條與「資金缺口金額」。\n拓客機制：顯示結果後跳出提示：「想知道如何每月用 3000 元補足缺口？點擊按鈕獲取專屬企劃書。」"
+    },
+    insurance_test: {
+        label: "🛡️ 保險 - 趣味理財性格測驗",
+        requirements: "功能：3~5 題簡單的選擇題，評估客戶是保守型、穩健型還是積極型。\n拓客機制：測驗結果只顯示一半，必須點擊授權或加入 LINE 官方帳號才能解鎖完整解析與推薦的保險配置。"
+    },
+    realEstate_afford: {
+        label: "🏠 房仲 - 買房負擔能力試算",
+        requirements: "功能：讓客戶輸入自備款、月收入，系統自動換算出「建議購買總價區間」與「每月還款額」。\n拓客機制：算完之後，按鈕引導：「點擊查看符合您預算的 A 級隱藏版好案」，直接推薦聯絡專員。"
+    },
+    realEstate_vip: {
+        label: "🏠 房仲 - VIP 線上看屋預約",
+        requirements: "功能：現代 iOS 質感的表單，讓客戶勾選偏好區域、房型、車位需求。\n拓客機制：客戶送出尋屋條件後，直接引導至 LINE 進行一對一尊榮服務安排。"
+    },
+    micro_bmi: {
+        label: "🧬 微創 - 專屬瘦身初步評估",
+        requirements: "功能：客戶輸入身高、體重、年齡，系統自動計算 BMI 與 BMR（基礎代謝率），並給出簡單的體型狀態評語。\n拓客機制：頁面底部置入：「想參加 30 天減脂挑戰賽？立即預約免費一對一體態諮詢」。"
+    },
+    micro_booking: {
+        label: "🎁 微創 - 動態型錄與預約系統",
+        requirements: "功能：以輪播圖展示最新作品/商品，下方附帶日曆選擇器讓客戶挑選可預約的時段。\n拓客機制：客戶選好時段後，一鍵生成預約資訊發送到店家的 LINE，完成預約。"
+    },
+    freelance_tarot: {
+        label: "🌟 專家 - 線上塔羅/流年測驗",
+        requirements: "功能：頁面上展示可互動的塔羅牌抽牌，或輸入生日計算生命靈數流年。\n拓客機制：系統給出簡短提示，並引導：「想深入解析近期運勢？加老師預約完整解析。」"
+    },
+    freelance_quiz: {
+        label: "🌟 專家 - 專業課前測驗與講義",
+        requirements: "功能：針對講師專業領域設計 5 題測驗，完成後可解鎖下載精華 PDF 講義的按鈕。\n拓客機制：透過測驗篩選受眾，下載前引導加入 LINE 做為精準行銷名單。"
+    }
+};
+
 const DEFAULT_AVATARS = [
     { name: '預設頭像 (AI 生成)', url: 'https://i.postimg.cc/Bv5w1bC7/Gemini-Generated-Image-5gk4x35gk4x35gk4kao-bei.png' },
     { name: '保險顧問', url: 'https://i.postimg.cc/cJKX7BGf/保險業.png' },
@@ -652,6 +687,15 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         requirements: project.requirements || '' // Share requirements field usually
     });
 
+    // Interactive Tool State
+    const [interactiveData, setInteractiveData] = useState({
+        templateKey: project.templateKey || 'insurance_retirement',
+        expertName: project.expertName || '',
+        expertAvatar: project.expertAvatar || DEFAULT_AVATARS[0].url,
+        ctaLink: project.ctaLink || 'https://line.me/ti/p/your_id',
+        requirements: project.requirements || INTERACTIVE_TEMPLATES['insurance_retirement'].requirements
+    });
+
     // Images
     const [uploadedImages, setUploadedImages] = useState(project.imageUrls ? project.imageUrls.map(url => ({ url, name: 'Image' })) : []);
     const [uploading, setUploading] = useState(false);
@@ -836,6 +880,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             };
             if (projectType === 'namecard') Object.assign(docData, cardData);
             else if (projectType === 'game') Object.assign(docData, gameData);
+            else if (projectType === 'interactive_tool') Object.assign(docData, interactiveData);
 
             await updateDoc(doc(db, 'projects', project.id), docData);
             if (shouldGoBack) {
@@ -925,6 +970,25 @@ ${baseInfo}
 ● 遊戲玩法/需求：${gameData.requirements}
 
 `;
+        } else if (projectType === 'interactive_tool') {
+            prompt = `【互動式拓客工具開發需求單】
+${baseInfo}
+■ 核心設定
+● 專家/品牌名稱：${interactiveData.expertName}
+● 專家頭像優先使用：${interactiveData.expertAvatar}
+● 最終導流 (CTA) 連結：${interactiveData.ctaLink}
+
+■ 工具邏輯與拓客機制 (極重要)
+${interactiveData.requirements}
+
+■ 開發與 UI 嚴格規範
+1. 必須是單頁式 SPA (純 HTML+CSS+JS 或 React)，RWD 手機優先。
+2. 一定要實作「多步驟」或「互動狀態切換」機制 (如：歡迎頁 -> 輸入頁/測驗頁 -> 載入動畫動畫 -> 結果頁)。不可只寫一個死板的長表單。
+3. UI 質感要求：現代化 iOS / 高質感風格。使用大圓角 (如 rounded-2xl)、柔和陰影 (shadow-lg)、寬裕的留白 (p-6)。背景請搭配乾淨設計。
+4. 表單與元件必須採用標準 Flexbox (flex-col, gap) 佈局，絕對禁止使用難以維護的絕對定位 (position: absolute) 或浮動標籤 (Floating Labels) 排版。
+5. 拓客機制實作：在結果頁面，務必將部分重要結果隱藏或模糊處理，並顯示強烈的 CTA 按鈕 (如「解鎖完整報告」、「領取專屬企劃」)，點擊後必須觸發跳轉至「最終導流 (CTA) 連結」。
+6. 所有的按鈕、輸入框必須注重互動反饋 (hover/active state)。
+`;
         } else {
             prompt = `【網站開發需求單】
 ${baseInfo}
@@ -963,6 +1027,7 @@ ${commonData.requirements}
                     <div className="space-y-4">
                         <FormSelect label="專案類型" value={projectType} onChange={(e) => setProjectType(e.target.value)}>
                             <option value="website">🌐 一般網站</option>
+                            <option value="interactive_tool">🎯 互動式拓客工具</option>
                             <option value="namecard">📇 電子名片</option>
                             <option value="game">🎮 Web 小遊戲</option>
                         </FormSelect>
@@ -1189,6 +1254,56 @@ ${commonData.requirements}
                     )}
                     {projectType === 'website' && (
                         <FormTextarea label="網站需求描述" name="requirements" value={commonData.requirements} onChange={handleCommonChange} h="h-48" />
+                    )}
+                    {projectType === 'interactive_tool' && (
+                        <div className="space-y-4">
+                            <FormSelect label="互動情境模版" value={interactiveData.templateKey} onChange={(e) => {
+                                const t = INTERACTIVE_TEMPLATES[e.target.value];
+                                if (t) {
+                                    setInteractiveData(prev => ({
+                                        ...prev,
+                                        templateKey: e.target.value,
+                                        requirements: t.requirements
+                                    }));
+                                }
+                            }}>
+                                {Object.keys(INTERACTIVE_TEMPLATES).map(key => (
+                                    <option key={key} value={key}>{INTERACTIVE_TEMPLATES[key].label}</option>
+                                ))}
+                            </FormSelect>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <FormInput label="專家/品牌名稱" name="expertName" value={interactiveData.expertName} onChange={(e) => setInteractiveData(prev => ({ ...prev, expertName: e.target.value }))} />
+                                <FormInput label="最終導流 (CTA) 連結" name="ctaLink" value={interactiveData.ctaLink} onChange={(e) => setInteractiveData(prev => ({ ...prev, ctaLink: e.target.value }))} />
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-500 mb-1 block">專家頭像選擇</label>
+                                <div className="flex gap-4 items-center">
+                                    <select
+                                        name="expertAvatar"
+                                        value={interactiveData.expertAvatar}
+                                        onChange={(e) => setInteractiveData(prev => ({ ...prev, expertAvatar: e.target.value }))}
+                                        className="flex-1 rounded p-2 text-sm outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 cursor-pointer"
+                                    >
+                                        <optgroup label="預設頭像">
+                                            {DEFAULT_AVATARS.map((a, i) => (
+                                                <option key={i} value={a.url}>{a.name}</option>
+                                            ))}
+                                        </optgroup>
+                                        {uploadedImages.length > 0 && (
+                                            <optgroup label="已上傳圖片">
+                                                {uploadedImages.map((img, i) => (
+                                                    <option key={i} value={img.url}>[圖片{i + 1}] {img.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                    </select>
+                                    <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden border border-white/20 shrink-0">
+                                        <img src={interactiveData.expertAvatar} alt="avatar" className="w-full h-full object-cover" />
+                                    </div>
+                                </div>
+                            </div>
+                            <FormTextarea label="工具邏輯與拓客機制 (可微調)" name="requirements" value={interactiveData.requirements} onChange={(e) => setInteractiveData(prev => ({ ...prev, requirements: e.target.value }))} h="h-40" />
+                        </div>
                     )}
                 </div>
             </div>
