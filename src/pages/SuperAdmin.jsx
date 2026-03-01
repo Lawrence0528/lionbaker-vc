@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, auth, signInWithGoogle, logOut } from '../firebase';
 import { collection, getDocs, query, updateDoc, doc, addDoc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
+import { copyToClipboard } from '../utils/clipboard';
 
 const SuperAdmin = () => {
     const [userProfile, setUserProfile] = useState(null);
@@ -254,7 +255,14 @@ const SuperAdmin = () => {
                                     <div className="font-mono text-green-400 text-sm break-all select-all cursror-text">
                                         {generatedKeys.map(k => <div key={k}>{k}</div>)}
                                     </div>
-                                    <button onClick={() => navigator.clipboard.writeText(generatedKeys.join('\n'))} className="mt-2 text-xs text-gray-400 hover:text-white">複製全部</button>
+                                    <button onClick={async () => {
+                                        const success = await copyToClipboard(generatedKeys.join('\n'));
+                                        if (success) {
+                                            alert('金鑰已全部複製！');
+                                        } else {
+                                            alert('複製失敗，請手動選取複製。');
+                                        }
+                                    }} className="mt-2 text-xs text-gray-400 hover:text-white">複製全部</button>
                                 </div>
                             )}
                         </div>

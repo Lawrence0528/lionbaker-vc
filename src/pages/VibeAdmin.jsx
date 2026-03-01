@@ -4,6 +4,7 @@ import { db, storage, signIn } from '../firebase';
 import { collection, addDoc, serverTimestamp, getDocs, query, where, doc, updateDoc, deleteDoc, getDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, listAll, deleteObject } from 'firebase/storage';
 import { validateHtmlCode } from '../utils/security';
+import { copyToClipboard } from '../utils/clipboard';
 
 // --- Constants ---
 const PREMIUM_COLORS = [
@@ -1156,9 +1157,13 @@ ${commonData.requirements}
                                     <img src={img.url} alt={img.name} className="w-full h-full object-cover group-hover:opacity-80 transition-opacity" />
                                 </a>
                                 <button
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(img.url);
-                                        alert('圖片網址已複製！');
+                                    onClick={async () => {
+                                        const success = await copyToClipboard(img.url);
+                                        if (success) {
+                                            alert('圖片網址已複製！');
+                                        } else {
+                                            alert('複製失敗，請手動選取複製。');
+                                        }
                                     }}
                                     className="absolute bottom-1 right-1 bg-white border border-emerald-100 text-emerald-600 text-[10px] px-2 py-1 rounded shadow-md opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-emerald-50"
                                 >
@@ -1319,15 +1324,21 @@ ${commonData.requirements}
             <div className="space-y-6">
                 <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 border-l-4 border-[#10b981]">
                     <h2 className="text-xl font-bold mb-4 text-emerald-500">4. 產生 Prompt</h2>
-                    <button onClick={async () => {
-                        await handleSave(false);
-                        try {
-                            await navigator.clipboard.writeText(generatePrompt());
-                            alert('已儲存專案更新並複製 PROMPT！');
-                        } catch (e) {
-                            console.error(e);
-                            alert('複製失敗');
-                        }
+                    <button onClick={() => {
+                        const promptText = generatePrompt();
+                        // 1. 同步執行複製，保證在使用者的觸控事件同一個 Tick 當下觸發
+                        copyToClipboard(promptText).then((success) => {
+                            if (success) {
+                                alert('已複製 PROMPT 並自動儲存專案更新！');
+                            } else {
+                                alert('複製失敗，您的瀏覽器可能阻擋了剪貼簿存取。');
+                            }
+                        });
+
+                        // 2. 異步儲存不阻擋複製權限
+                        handleSave(false).catch(e => {
+                            console.error('自動儲存失敗', e);
+                        });
                     }} className="w-full py-4 text-lg font-bold uppercase tracking-widest bg-emerald-500 text-white shadow-md hover:bg-emerald-600 rounded-xl flex items-center justify-center gap-2 mb-2 hover:scale-[1.02] transition-transform">📋 複製 PROMPT</button>
                     <p className="text-[10px] text-slate-400 text-center">* 已自動將 Prompt 中的 [圖片N] 替換為真實連結</p>
                 </div>
