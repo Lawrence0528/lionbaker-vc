@@ -1,0 +1,17 @@
+{
+  "projects": {
+    "default": "lionbaker-vc"
+  },
+  "targets": {
+    "lionbaker-vc": {
+      "hosting": {
+        "app": [
+          "lionbaker-vc"
+        ],
+        "sandbox": [
+          "lionbaker-run"
+        ]
+      }
+    }
+  }
+}
