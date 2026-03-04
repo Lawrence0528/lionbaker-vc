@@ -921,7 +921,12 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
 ■ LINE LIFF 整合 (必做)
 本專案為 LINE LIFF 應用程式，請務必嚴格執行以下要求：
 1. 請在 HTML 的 <head> 標籤中引入 LIFF SDK：<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-2. 在主要的 JavaScript 區塊中，一啟動就呼叫 \`liff.init({ liffId: "${commonData.liffId}" })\` 進行初始化 (請確保網址與此 liffId 絕對對應，否則會發生 INVALID_RECEIVER 錯誤)。
+2. 在主要的 JavaScript 區塊中，為了避免 iOS LIFF 網路延遲導致畫面卡死，請實作初始化與逾時防呆機制 (設定 5 秒)。範例：
+   Promise.race([
+       liff.init({ liffId: "${commonData.liffId}" }),
+       new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
+   ]).then(() => { /* 進入正式邏輯 */ }).catch(err => { /* 在畫面上顯示明顯的「載入逾時重試」按鈕 */ });
+   (請確保網址與此 liffId 絕對對應，否則會發生 INVALID_RECEIVER 錯誤)。
 3. 所有的主要畫面渲染或操作邏輯，必須確保是在 \`liff.init()\` 成功解析之後才執行。${featureText}
 `;
         }
@@ -1556,10 +1561,18 @@ const VibeAdmin = () => {
                     pictureUrl: 'https://placehold.co/150'
                 });
             } else {
-                liff.init({ liffId: "2008893070-nnNXBPod" })
+                Promise.race([
+                    liff.init({ liffId: "2008893070-nnNXBPod" }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
+                ])
                     .then(() => liff.isLoggedIn() ? liff.getProfile() : liff.login())
                     .then(handleProfile)
-                    .catch(err => console.error('LIFF Error', err));
+                    .catch(err => {
+                        console.error('LIFF Error', err);
+                        if (err.message === 'LIFF_TIMEOUT') {
+                            alert("LINE 授權連線逾時，請檢查網路或重新開啟此頁面。");
+                        }
+                    });
             }
         };
 

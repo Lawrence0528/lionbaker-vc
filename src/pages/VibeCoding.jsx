@@ -55,7 +55,10 @@ const VibeCoding = () => {
                     setLineProfile(mockProfile);
                     setFormData(prev => ({ ...prev, name: mockProfile.displayName }));
                 } else if (LIFF_ID && LIFF_ID !== 'MY_LIFF_ID') {
-                    await liff.init({ liffId: LIFF_ID });
+                    await Promise.race([
+                        liff.init({ liffId: LIFF_ID }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
+                    ]);
                     if (liff.isLoggedIn()) {
                         setIsLiffLoggedIn(true);
                         const profile = await liff.getProfile();
