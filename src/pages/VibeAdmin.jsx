@@ -129,6 +129,49 @@ const INTERACTIVE_TEMPLATES = {
     }
 };
 
+const LANDING_PAGE_TEMPLATES = {
+    cafe: {
+        label: "☕ 咖啡廳 / 甜點輕食",
+        requirements: "生成咖啡與輕食早午餐的專業 landing page，加入 SVG 動畫與真實照片，給人強烈印象及消費衝動，響應式設計。\n功能：展示招牌飲品、店內環境，下方需有「立即訂位」或「外帶自取」按鈕。\n拓客機制：點擊訂位引導加入 LINE 會員領取首購優惠。"
+    },
+    gym: {
+        label: "🏋️ 健身房 / 瑜珈教室",
+        requirements: "生成專業質感的私人教練或瑜珈教室 landing page，強調體態改變與教練專業度，給人揮灑汗水的熱血感或身心靈放鬆的寧靜感。\n功能：展示教練師資、課程方案(月費/季費)、場地器材。\n拓客機制：提供「免費預約體驗一堂課」表單，填寫後引導加 LINE 聯繫專員。"
+    },
+    clinic: {
+        label: "✨ 醫美診所 / 美容 SPA",
+        requirements: "生成高奢、信任感強的醫美診所或 SPA 中心 landing page，運用溫柔色調與高清晰膚質特寫，強調專業與隱私。\n功能：療程介紹、醫師專業背景、成功案例(BA對比)。\n拓客機制：「線上評估膚況」小測驗，完成後發送專屬保養建議與首次體驗優惠券至 LINE。"
+    },
+    tutor: {
+        label: "📚 補習班 / 線上課程",
+        requirements: "生成具備權威感且吸引家長或學生的 landing page，強調升學率、教學法與獨家教材，色調明亮積極。\n功能：課程大綱、講師陣容介紹、歷年榜單或學員評價。\n拓客機制：提供「免費領取考古題/精華講義」按鈕，需加 LINE 即可自動派發 PDF。"
+    },
+    restaurant: {
+        label: "🍽️ 餐廳 / 餐酒館",
+        requirements: "生成引發食慾、氣氛迷人的餐廳 landing page，深色質感配上高飽和度的食物誘人照片，或是明亮清新的家庭餐廳風格。\n功能：線上清晰菜單、最新期間限定活動、主廚推薦。\n拓客機制：「壽星免費升級餐點」活動，輸入生日即派發 LINE 電子優惠券。"
+    },
+    photoStudio: {
+        label: "📸 攝影工作室",
+        requirements: "生成極簡、藝術感強的攝影工作室 landing page，以作品集為主體，排版如雜誌風。\n功能：展示婚紗、寫真、商案等分類作品集、服務收費標準。\n拓客機制：提供「點我預約線上諮詢」直接對接 LINE，並送「精修照片多一張」優惠。"
+    },
+    petSalon: {
+        label: "🐾 寵物美容 / 旅館",
+        requirements: "生成溫馨、可愛且具安心感的寵物服務 landing page，採用馬卡龍色系，強調對毛孩的愛心與專業設備。\n功能：美容價目表、館內無死角攝影畫面、寵物保母證照展示。\n拓客機制：首次預約洗澡「免費升級 SPA」，點擊按鈕跳轉 LINE 預約時段。"
+    },
+    autoRepair: {
+        label: "🚗 汽車美容 / 保修",
+        requirements: "生成陽剛、精密、充滿科技感與職人精神的汽車服務 landing page，金屬或深灰色調，強調工藝細節。\n功能：鍍膜/保養套餐方案、施工前後對比、職人施工縮時影片。\n拓客機制：「愛車估價表單」填寫年分車型，即透過 LINE 發送客製化保養建議與報價。"
+    },
+    designerBrand: {
+        label: "👗 獨立設計師 / 服飾品牌",
+        requirements: "生成高質感、具現代表達力的品牌 landing page，強調原創設計、材質細節與品牌精神，排版留白多。\n功能：最新一季 Lookbook、熱銷單品選購、品牌故事。\n拓客機制：「訂閱電子報或加 LINE 領取 $200 購物金」，轉化訪客為首次購買。"
+    },
+    interiorDesign: {
+        label: "🛋️ 室內設計 / 裝修工程",
+        requirements: "生成空間感強、展現生活品味的室內設計 landing page，排版如建築圖鑑，展現空間配置的巧思。\n功能：各式風格作品集、設計流程與收費標準、客戶 3D 擬真圖與完工對比。\n拓客機制：「免費索取裝潢避坑指南 PDF」，引導加 LINE 以獲取名單。"
+    }
+};
+
 const DEFAULT_AVATARS = [
     { name: '預設頭像 (AI 生成)', url: 'https://i.postimg.cc/Bv5w1bC7/Gemini-Generated-Image-5gk4x35gk4x35gk4kao-bei.png' },
     { name: '保險顧問', url: 'https://i.postimg.cc/cJKX7BGf/保險業.png' },
@@ -509,10 +552,19 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
     // Add timestamp for cache busting
     // use stable timestamp initialized at mount
     const [timestamp] = useState(() => {
-        return project.updatedAt ? project.updatedAt.seconds : Math.floor(Date.now() / 1000);
+        return project.updatedAt?.seconds ?? Math.floor(Date.now() / 1000);
     });
+    const [copyLinkMsg, setCopyLinkMsg] = useState('');
 
     const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}?t=${timestamp}`;
+    // 供複製使用的乾淨連結（不含 timestamp）
+    const cleanProjectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}`;
+
+    const handleCopyLink = async () => {
+        const success = await copyToClipboard(cleanProjectUrl);
+        setCopyLinkMsg(success ? '✓ 已複製' : '複製失敗');
+        setTimeout(() => setCopyLinkMsg(''), 1500);
+    };
 
     return (
         <div className="bg-white border border-slate-200 shadow-xl p-5 rounded-xl hover:bg-slate-50 transition group relative flex flex-col h-full">
@@ -524,7 +576,7 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
                         {project.type === 'game' ? 'Web 小遊戲' : project.type === 'namecard' ? '電子名片' : '一般網站'}
                     </span>
                     <h3 className="font-bold text-lg leading-tight text-slate-900 mb-1">{project.name}</h3>
-                    <div className="text-xs text-slate-500 font-mono">ID: {project.id}</div>
+
                 </div>
                 <div className="flex items-center gap-2">
                     <button
@@ -554,9 +606,8 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
                                     <div className="w-full h-32 bg-slate-200 flex items-center justify-center text-slate-500 text-xs">No Image</div>
                                 )}
                                 <div className="p-3 bg-[#1a1a1a] flex-1">
-                                    <div className="text-[10px] text-slate-400 truncate mb-1">PROD PREVIEW</div>
-                                    <div className="font-bold text-sm truncate mb-1 text-slate-700">{seo.title}</div>
-                                    <div className="text-xs text-slate-400 line-clamp-2">{seo.desc}</div>
+                                    <div className="font-bold text-sm truncate mb-1 text-slate-700 text-left">{seo.title}</div>
+                                    <div className="text-xs text-slate-400 line-clamp-2 text-left">{seo.desc}</div>
                                 </div>
                             </>
                         ) : (
@@ -568,14 +619,30 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
                         )}
                     </div>
 
-                    <a
-                        href={projectUrl}
-                        target="_blank"
-                        rel="noreferrer"
+                    <button
+                        onClick={() => {
+                            // 在 LINE 客戶端內強制用外部瀏覽器開啟
+                            if (liff.isInClient()) {
+                                liff.openWindow({ url: projectUrl, external: true });
+                            } else {
+                                window.open(projectUrl, '_blank', 'noreferrer');
+                            }
+                        }}
                         className="w-full py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-[#10b981]/20 rounded-lg text-center text-sm transition flex items-center justify-center gap-2"
                     >
                         🔗 開啟網頁
-                    </a>
+                    </button>
+                    {/* 複製連結按鈕 */}
+                    <button
+                        onClick={handleCopyLink}
+                        className="mt-2 w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-center text-sm transition flex items-center justify-center gap-2"
+                    >
+                        {copyLinkMsg ? (
+                            <span className="text-emerald-600 font-bold">{copyLinkMsg}</span>
+                        ) : (
+                            <>📋 複製連結</>
+                        )}
+                    </button>
                 </>
             ) : (
                 <div className="flex-1 flex items-center justify-center text-slate-400 italic text-sm border border-white/5 rounded-lg mb-4 bg-slate-50">
@@ -695,6 +762,18 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         expertAvatar: project.expertAvatar || DEFAULT_AVATARS[0].url,
         ctaLink: project.ctaLink || 'https://line.me/ti/p/your_id',
         requirements: project.requirements || INTERACTIVE_TEMPLATES['insurance_retirement'].requirements
+    });
+
+    // Landing Page State
+    const [landingPageData, setLandingPageData] = useState({
+        templateKey: project.templateKey || 'cafe',
+        storeName: project.storeName || '星塵咖啡 Stardust Cafe',
+        logoUrl: project.logoUrl || DEFAULT_AVATARS[0].url,
+        brandStory: project.brandStory || '創立於2024年，志在為每位旅人提供一杯能讓人沈澱心靈的精品咖啡。',
+        businessHours: project.businessHours || '週一至週日 08:00 - 20:00',
+        contactInfo: project.contactInfo || '地址：台北市大安區光復南路999號 | 電話：02-23456789',
+        features: project.features || '1. 自家烘焙單品豆\n2. 手工限定輕食早午餐\n3. 舒適的插座沙發區',
+        requirements: project.requirements || LANDING_PAGE_TEMPLATES['cafe'].requirements
     });
 
     // Images
@@ -819,6 +898,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
     const handleCommonChange = (e) => setCommonData(prev => ({ ...prev, [e.target.name]: e.target.value }));
     const handleCardChange = (e) => setCardData(prev => ({ ...prev, [e.target.name]: e.target.value }));
     const handleGameChange = (e) => setGameData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const handleLandingPageChange = (e) => setLandingPageData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
     const handleFilesUpload = async (e) => {
         if (!e.target.files || e.target.files.length === 0) return;
@@ -849,6 +929,31 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             setStatusMsg('上傳失敗: ' + error.message);
         } finally {
             setUploading(false);
+        }
+    };
+
+    // 儲存成功後若在 LINE 對話中開啟，自動發送通知訊息到對話
+    const sendLineNotification = async () => {
+        try {
+            // 確認 liff 已在 LINE 客戶端內（非外部瀏覽器）
+            if (typeof liff === 'undefined' || !liff.isInClient()) return;
+            // 確認 context type 可接收聊天室訊息
+            const ctx = liff.getContext();
+            const validTypes = ['utou', 'room', 'group'];
+            if (!ctx || !validTypes.includes(ctx.type)) return;
+            // 組合乾淨的專案網址（不含 timestamp）
+            const userParam = userProfile?.alias || userProfile?.userId;
+            const projectParam = commonData.projectAlias || project.id;
+            const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}`;
+            await liff.sendMessages([
+                {
+                    type: 'text',
+                    text: `✅ 您已成功建立/修改程式碼\n「${commonData.name}」\n${projectUrl}`
+                }
+            ]);
+        } catch (err) {
+            // 靜默處理不影響主儲存流程
+            console.warn('LINE 通知發送失敗:', err);
         }
     };
 
@@ -889,8 +994,15 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             if (projectType === 'namecard') Object.assign(docData, cardData);
             else if (projectType === 'game') Object.assign(docData, gameData);
             else if (projectType === 'interactive_tool') Object.assign(docData, interactiveData);
+            else if (projectType === 'landingPage') Object.assign(docData, landingPageData);
 
             await updateDoc(doc(db, 'projects', project.id), docData);
+
+            // 儲存成功後若程式碼有內容，嘗試發送 LINE 對話通知
+            if (commonData.htmlCode?.trim()) {
+                sendLineNotification();
+            }
+
             if (shouldGoBack) {
                 alert('儲存成功！');
                 onSave(); // Go back
@@ -1002,6 +1114,27 @@ ${interactiveData.requirements}
 5. 拓客機制實作：在結果頁面，務必將部分重要結果隱藏或模糊處理，並顯示強烈的 CTA 按鈕 (如「解鎖完整報告」、「領取專屬企劃」)，點擊後必須觸發跳轉至「最終導流 (CTA) 連結」。
 6. 所有的按鈕、輸入框必須注重互動反饋 (hover/active state)。
 `;
+        } else if (projectType === 'landingPage') {
+            prompt = `【品牌/店家 Landing Page 開發需求單】
+${baseInfo}
+■ 核心品牌資訊
+● 品牌/店家名稱：${landingPageData.storeName}
+● 品牌Logo優先使用：${landingPageData.logoUrl}
+● 品牌故事/理念：${landingPageData.brandStory}
+● 營業時間：${landingPageData.businessHours}
+● 聯絡資訊 (地址/電話)：${landingPageData.contactInfo}
+● 主打特色/服務項目：
+${landingPageData.features}
+
+■ 頁面企劃與拓客機制 (極重要)
+${landingPageData.requirements}
+
+■ 開發與 UI 嚴格規範
+1. 必須是單頁式 SPA (純 HTML+CSS+JS 或 React)，RWD 手機優先。
+2. 視覺排版：給人強烈印象及消費衝動的專業著陸頁，需大量加入滿版高質感真實照片與特效裝飾，並針對指定的行業進行動線規劃。
+3. UI 質感要求：現代化風格，適當運用卡片式設計，採用標準 Flexbox 佈局，請使用清晰易讀的大型按鈕 (CTA)。
+4. 所有的按鈕、互動必須明確引導使用者了解品牌並點擊購買或加好友。
+`;
         } else {
             prompt = `【網站開發需求單】
 ${baseInfo}
@@ -1029,7 +1162,7 @@ ${commonData.requirements}
         <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in-up">
             <div className="lg:col-span-2 flex items-center gap-4 mb-2">
                 <button onClick={onBack} className="px-4 py-2 rounded bg-slate-100 hover:bg-slate-200 transition">← 返回列表</button>
-                <div className="text-slate-500 font-mono text-sm">Project ID: {project.id}</div>
+                {/* <div className="text-slate-500 font-mono text-sm">Project ID: {project.id}</div> */}
                 <div className="ml-auto text-green-400 text-sm">{statusMsg}</div>
             </div>
 
@@ -1037,20 +1170,37 @@ ${commonData.requirements}
             <div className="space-y-6">
                 <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6">
                     <h2 className="text-xl font-bold mb-4 text-emerald-500">1. 基本設定</h2>
+                    {/* <div className="mb-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <label className="text-xs text-slate-500 mb-1 block">專案專屬網址</label>
+                        <div className="flex items-center gap-2">
+                            <div className="flex-1 text-sm text-slate-700 font-mono break-all line-clamp-2">
+                                https://lionbaker-run.web.app/u/{userProfile.alias || userProfile.userId}/{commonData.projectAlias || project.id}
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    const url = `https://lionbaker-run.web.app/u/${userProfile.alias || userProfile.userId}/${commonData.projectAlias || project.id}`;
+                                    const success = await copyToClipboard(url);
+                                    if (success) {
+                                        setStatusMsg('✓ 連結已複製');
+                                        setTimeout(() => setStatusMsg(''), 1500);
+                                    }
+                                }}
+                                className="shrink-0 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 border border-emerald-200 rounded-lg text-xs transition font-bold whitespace-nowrap"
+                            >
+                                📋 複製
+                            </button>
+                        </div>
+                    </div> */}
                     <div className="space-y-4">
                         <FormSelect label="專案類型" value={projectType} onChange={(e) => setProjectType(e.target.value)}>
+                            <option value="landingPage">🚀 Landing Page (品牌/店家)</option>
                             <option value="website">🌐 一般網站</option>
                             <option value="interactive_tool">🎯 互動式拓客工具</option>
                             <option value="namecard">📇 電子名片</option>
                             <option value="game">🎮 Web 小遊戲</option>
                         </FormSelect>
                         <FormInput label="專案名稱" name="name" value={commonData.name} onChange={handleCommonChange} />
-                        <div className="mb-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                            <label className="text-xs text-slate-500 mb-1 block">專案專屬網址</label>
-                            <div className="text-sm text-slate-700 font-mono break-all line-clamp-2">
-                                https://lionbaker-run.web.app/u/{userProfile.alias || userProfile.userId}/{commonData.projectAlias || project.id}
-                            </div>
-                        </div>
+
                         <div className="flex flex-col gap-4">
                             <div>
                                 <label className="text-xs text-slate-500 mb-1 block">主色調</label>
@@ -1322,6 +1472,121 @@ ${commonData.requirements}
                             <FormTextarea label="工具邏輯與拓客機制 (可微調)" name="requirements" value={interactiveData.requirements} onChange={(e) => setInteractiveData(prev => ({ ...prev, requirements: e.target.value }))} h="h-40" />
                         </div>
                     )}
+                    {projectType === 'landingPage' && (
+                        <div className="space-y-4">
+                            <FormSelect label="Landing Page 模版" value={landingPageData.templateKey} onChange={(e) => {
+                                const t = LANDING_PAGE_TEMPLATES[e.target.value];
+                                if (t) {
+                                    let storeName = '品牌名稱';
+                                    let brandStory = '品牌故事...';
+                                    let features = '1. 特色一\\n2. 特色二';
+
+                                    switch (e.target.value) {
+                                        case 'cafe':
+                                            storeName = '星塵咖啡 Stardust Cafe';
+                                            brandStory = '創立於 2024 年，志在為每位旅人提供一杯能讓人沈澱心靈的精品咖啡。';
+                                            features = '1. 自家烘焙單品豆\\n2. 手工限定輕食早午餐\\n3. 舒適的插座沙發區';
+                                            break;
+                                        case 'gym':
+                                            storeName = '鐵血悍將健身俱樂部';
+                                            brandStory = '專注於力量訓練與體態雕塑，陪你打造無堅不摧的意志力。';
+                                            features = '1. 國際級進口器材\\n2. 前國手教練1對1指導\\n3. 舒適乾淨的大坪數淋浴空間';
+                                            break;
+                                        case 'clinic':
+                                            storeName = '維納斯醫美 SPA 中心';
+                                            brandStory = '用科技結合專業手技，打造專屬於您的無瑕透亮美肌。';
+                                            features = '1. 最新皮秒雷射除斑療程\\n2. 專屬私密 VIP 保養包廂\\n3. 專業醫師親自一對一看診';
+                                            break;
+                                        case 'tutor':
+                                            storeName = '百大菁英升學文理補習班';
+                                            brandStory = '在地深耕 15 年，超過萬名學生的選擇，我們保證讓您的孩子愛上學習。';
+                                            features = '1. 獨家心智圖單字記憶法\\n2. 24 小時專屬解題 APP 隨問隨答\\n3. 歷年榜單全市第一名保證';
+                                            break;
+                                        case 'restaurant':
+                                            storeName = 'Bistro 99 義式餐酒館';
+                                            brandStory = '傳承義大利拿坡里正宗手藝，搭配百款精選莊園紅白酒，完美的微醺之夜。';
+                                            features = '1. 招牌手工窯烤瑪格麗特披薩\\n2. 在小農食材發想創意料理\\n3. 每週五週末狂歡 Live Band 演唱';
+                                            break;
+                                        case 'photoStudio':
+                                            storeName = '光影紀實攝影工作室';
+                                            brandStory = '捕捉最真實的情感瞬間，讓每張照片都成為無可取代的回憶。';
+                                            features = '1. 獨家自然光韓系實景攝影棚\\n2. 復古底片質感原色精修服務\\n3. 上百套進口設計師手工婚紗';
+                                            break;
+                                        case 'petSalon':
+                                            storeName = '汪喵星球寵物美容';
+                                            brandStory = '把每隻毛孩當作自己的寶貝，提供最無壓力、最溫柔的美容洗沐體驗。';
+                                            features = '1. O3臭氧微氣泡SPA浴去味殺菌\\n2. 堅持不打麻醉、全程貓狗分區\\n3. 透明玻璃美容室主人全程安心';
+                                            break;
+                                        case 'autoRepair':
+                                            storeName = '極星車體美研';
+                                            brandStory = '堅持職人精神，專注每一個鈑件的完美，給您的愛車超越新車的閃耀。';
+                                            features = '1. 航太級奈米陶瓷鍍膜抗污防刮\\n2. 無塵恆溫百萬硬體施工車位\\n3. 歐系車原廠同規數位診斷電腦';
+                                            break;
+                                        case 'designerBrand':
+                                            storeName = 'VIBE 獨立服飾品牌';
+                                            brandStory = '為亞洲身型量身打造，主打極簡、舒適且不退流行的剪裁與穿搭設計。';
+                                            features = '1. 獨家親膚涼感抗皺特殊面料\\n2. 100% 台灣在地工坊小批製造\\n3. 每週上架限量新款絕不撞衫';
+                                            break;
+                                        case 'interiorDesign':
+                                            storeName = '築夢室內裝修設計';
+                                            brandStory = '傾聽您的需求，以實用與空間美學平衡為出發點，為您築起夢想中的家。';
+                                            features = '1. 3D全景擬真圖免費出圖溝通\\n2. 履約專戶保證、按階段安心付款\\n3. 專屬工班群組每日進度拍照回報';
+                                            break;
+                                    }
+
+                                    setLandingPageData(prev => ({
+                                        ...prev,
+                                        templateKey: e.target.value,
+                                        requirements: t.requirements,
+                                        storeName,
+                                        brandStory,
+                                        features
+                                    }));
+                                }
+                            }}>
+                                {Object.keys(LANDING_PAGE_TEMPLATES).map(key => (
+                                    <option key={key} value={key}>{LANDING_PAGE_TEMPLATES[key].label}</option>
+                                ))}
+                            </FormSelect>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <FormInput label="品牌/店家名稱" name="storeName" value={landingPageData.storeName} onChange={handleLandingPageChange} />
+                                <div>
+                                    <label className="text-xs text-slate-500 mb-1 block">品牌 Logo 選擇</label>
+                                    <div className="flex gap-4 items-center">
+                                        <select
+                                            name="logoUrl"
+                                            value={landingPageData.logoUrl}
+                                            onChange={handleLandingPageChange}
+                                            className="flex-1 rounded p-2 text-sm outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 cursor-pointer"
+                                        >
+                                            <optgroup label="預設LOGO">
+                                                {DEFAULT_AVATARS.map((a, i) => (
+                                                    <option key={i} value={a.url}>{a.name}</option>
+                                                ))}
+                                            </optgroup>
+                                            {uploadedImages.length > 0 && (
+                                                <optgroup label="已上傳圖片">
+                                                    {uploadedImages.map((img, i) => (
+                                                        <option key={i} value={img.url}>[圖片{i + 1}] {img.name}</option>
+                                                    ))}
+                                                </optgroup>
+                                            )}
+                                        </select>
+                                        <div className="w-10 h-10 rounded-lg bg-slate-100 overflow-hidden border border-white/20 shrink-0">
+                                            <img src={landingPageData.logoUrl} alt="logo" className="w-full h-full object-cover" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <FormInput label="營業時間" name="businessHours" value={landingPageData.businessHours} onChange={handleLandingPageChange} />
+                                <FormInput label="聯絡資訊 (地址/電話)" name="contactInfo" value={landingPageData.contactInfo} onChange={handleLandingPageChange} />
+                            </div>
+                            <FormTextarea label="品牌故事 / 理念" name="brandStory" value={landingPageData.brandStory} onChange={handleLandingPageChange} h="h-24" />
+                            <FormTextarea label="主打特色 / 服務項目 (請條列式)" name="features" value={landingPageData.features} onChange={handleLandingPageChange} h="h-32" />
+                            <FormTextarea label="頁面企劃與拓客機制 (可微調)" name="requirements" value={landingPageData.requirements} onChange={handleLandingPageChange} h="h-40" />
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -1437,8 +1702,8 @@ const VibeAdmin = () => {
     const [userProfile, setUserProfile] = useState(null);
     const [themeColor, setThemeColor] = useState('#00ffff');
     const [showSettings, setShowSettings] = useState(false);
+    const [initError, setInitError] = useState(null); // LIFF/Auth 初始化錯誤訊息
 
-    // Gatekeeper State
     // Gatekeeper State
     const [needsTerms, setNeedsTerms] = useState(false);
     const [needsAlias, setNeedsAlias] = useState(false); // New Step
@@ -1468,111 +1733,150 @@ const VibeAdmin = () => {
     };
 
     useEffect(() => {
-        const init = async () => {
-            try {
-                await signIn();
-                console.log('Firebase OK');
-            } catch (err) {
-                console.error('Firebase 登入失敗', err);
-            }
+        const handleProfile = async (profile) => {
+            if (profile) {
+                try {
+                    const userRef = doc(db, 'users', profile.userId);
+                    const userSnap = await getDoc(userRef);
+                    let dbData = {};
 
-            const handleProfile = async (profile) => {
-                if (profile) {
-                    try {
-                        const userRef = doc(db, 'users', profile.userId);
-                        const userSnap = await getDoc(userRef);
-                        let dbData = {};
+                    const calcDefaultExpiry = () => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 3);
+                        d.setHours(23, 59, 59);
+                        return d;
+                    };
 
-                        const calcDefaultExpiry = () => {
-                            const d = new Date();
-                            d.setDate(d.getDate() + 3);
-                            d.setHours(23, 59, 59);
-                            return d;
+                    if (userSnap.exists()) {
+                        dbData = userSnap.data();
+                        if (!dbData.expiryDate && !dbData.isSvip) {
+                            dbData.expiryDate = calcDefaultExpiry();
+                            await updateDoc(userRef, { expiryDate: dbData.expiryDate });
+                        }
+                    } else {
+                        dbData = {
+                            displayName: profile.displayName,
+                            pictureUrl: profile.pictureUrl,
+                            createdAt: serverTimestamp(),
+                            role: 'user',
+                            status: 'active',
+                            expiryDate: calcDefaultExpiry(),
+                            agreedToTerms: false
                         };
-
-                        if (userSnap.exists()) {
-                            dbData = userSnap.data();
-                            if (!dbData.expiryDate && !dbData.isSvip) {
-                                dbData.expiryDate = calcDefaultExpiry();
-                                await updateDoc(userRef, { expiryDate: dbData.expiryDate });
-                            }
-                        } else {
-                            dbData = {
-                                displayName: profile.displayName,
-                                pictureUrl: profile.pictureUrl,
-                                createdAt: serverTimestamp(),
-                                role: 'user',
-                                status: 'active',
-                                expiryDate: calcDefaultExpiry(),
-                                agreedToTerms: false
-                            };
-                            await setDoc(userRef, dbData);
-                        }
-
-                        const currentUser = { ...profile, ...dbData };
-                        setUserProfile(currentUser);
-
-                        // Gatekeeper Checks
-                        if (currentUser.status === 'banned') {
-                            setIsBanned(true);
-                            return;
-                        }
-
-                        if (!currentUser.agreedToTerms) {
-                            setNeedsTerms(true);
-                            return; // Stop here until terms agreed
-                        }
-
-                        if (!currentUser.alias) {
-                            setNeedsAlias(true);
-                            return; // Stop here until alias set
-                        }
-
-                        // License Check
-                        // SVIP = Infinite
-                        if (!currentUser.isSvip) {
-                            if (!currentUser.expiryDate) {
-                                // First time, no expiry set (Fallback if logic above fails)
-                                setNeedsActivation(true);
-                            } else {
-                                // Check if expired
-                                const exp = currentUser.expiryDate.seconds
-                                    ? new Date(currentUser.expiryDate.seconds * 1000)
-                                    : new Date(currentUser.expiryDate);
-                                if (new Date() > exp) {
-                                    setIsExpired(true);
-                                }
-                            }
-                        }
-
-                        fetchProjects(profile.userId);
-                    } catch (e) {
-                        console.error("User Sync Error", e);
-                        setUserProfile(profile);
+                        await setDoc(userRef, dbData);
                     }
-                }
-            };
 
+                    const currentUser = { ...profile, ...dbData };
+                    setUserProfile(currentUser);
+
+                    // Gatekeeper Checks
+                    if (currentUser.status === 'banned') {
+                        setIsBanned(true);
+                        return;
+                    }
+
+                    if (!currentUser.agreedToTerms) {
+                        setNeedsTerms(true);
+                        return; // Stop here until terms agreed
+                    }
+
+                    if (!currentUser.alias) {
+                        setNeedsAlias(true);
+                        return; // Stop here until alias set
+                    }
+
+                    // License Check
+                    // SVIP = Infinite
+                    if (!currentUser.isSvip) {
+                        if (!currentUser.expiryDate) {
+                            // First time, no expiry set (Fallback if logic above fails)
+                            setNeedsActivation(true);
+                        } else {
+                            // Check if expired
+                            const exp = currentUser.expiryDate.seconds
+                                ? new Date(currentUser.expiryDate.seconds * 1000)
+                                : new Date(currentUser.expiryDate);
+                            if (new Date() > exp) {
+                                setIsExpired(true);
+                            }
+                        }
+                    }
+
+                    fetchProjects(profile.userId);
+                } catch (e) {
+                    console.error("User Sync Error", e);
+                    setUserProfile(profile);
+                }
+            }
+        };
+
+        // LIFF 初始化（含自動重試）
+        const initLiffWithRetry = async (retries = 1) => {
+            // 關鍵修復：LINE WebView 逾時設為 10 秒，足夠但不會讓用戶等太久
+            const LIFF_TIMEOUT_MS = 10000;
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    await Promise.race([
+                        liff.init({ liffId: "2008893070-nnNXBPod" }),
+                        new Promise((_, reject) =>
+                            setTimeout(() => reject(new Error('LIFF_TIMEOUT')), LIFF_TIMEOUT_MS)
+                        )
+                    ]);
+                    return; // 初始化成功，直接返回
+                } catch (err) {
+                    console.warn(`LIFF init 第 ${attempt + 1} 次嘗試失敗:`, err.message);
+                    if (attempt === retries) throw err; // 最後一次重試也失敗，拋出錯誤
+                    await new Promise(r => setTimeout(r, 1000)); // 等 1 秒再重試
+                }
+            }
+        };
+
+        const init = async () => {
             if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
                 console.log('Skipping LIFF for local testing');
+                // 本地測試：Firebase Auth 仍需執行
+                try { await signIn(); } catch (e) { console.error('Firebase 登入失敗', e); }
                 handleProfile({
                     userId: 'Ue17ac074742b4f21da6f6b41307a246a', // Admin ID
                     displayName: 'Local User',
                     pictureUrl: 'https://placehold.co/150'
                 });
-            } else {
-                Promise.race([
-                    liff.init({ liffId: "2008893070-nnNXBPod" }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
-                ])
-                    .then(() => liff.isLoggedIn() ? liff.getProfile() : liff.login())
-                    .then(handleProfile)
-                    .catch(err => {
-                        console.error('LIFF Error', err);
-                        if (err.message === 'LIFF_TIMEOUT') {
-                            alert("LINE 授權連線逾時，請檢查網路或重新開啟此頁面。");
-                        }
-                    });
+                return;
+            }
+
+            try {
+                // Firebase Auth 獨立執行，不阻擋 LIFF 主流程
+                signIn()
+                    .then(() => console.log('Firebase Auth OK'))
+                    .catch(err => console.error('Firebase 登入失敗（非致命）:', err));
+
+                // 初始化 LIFF（含自動重試）
+                await initLiffWithRetry();
+
+                // 關鍵修復：不使用 liff.isLoggedIn()。
+                // 在 LINE 內建瀏覽器中，init() 完成後 SDK 已自動完成授權，
+                // 直接呼叫 getProfile() 即可。若失敗才代表真正未登入。
+                try {
+                    const profile = await liff.getProfile();
+                    await handleProfile(profile);
+                } catch (profileErr) {
+                    console.warn('getProfile 失敗，嘗試重新登入:', profileErr.message);
+                    // 只有在「外部瀏覽器」中才呼叫 login()，避免 LINE 客戶端內的無窮重導向
+                    if (!liff.isInClient()) {
+                        liff.login();
+                    } else {
+                        // 在 LINE 客戶端內 getProfile 失敗是嚴重錯誤
+                        throw new Error('無法取得 LINE 用戶資料，請重新開啟頁面。');
+                    }
+                }
+            } catch (err) {
+                console.error('LIFF 初始化失敗:', err);
+                // 以友善 UI 取代 alert
+                if (err.message === 'LIFF_TIMEOUT') {
+                    setInitError('連線逾時，請檢查網路後點擊下方按鈕重試。');
+                } else {
+                    setInitError(err.message || '初始化失敗，請重新開啟頁面。');
+                }
             }
         };
 
@@ -1753,11 +2057,29 @@ const VibeAdmin = () => {
         >
 
             <h1 className="text-3xl font-bold mb-6 mt-4 text-emerald-500 drop-drop-shadow-sm">
-                Vibe AI 專案工廠 V3
+                靈感烘焙機 V1
             </h1>
 
             {!userProfile ? (
-                <div className="text-center p-10"><p className="text-slate-500">Loading...</p></div>
+                initError ? (
+                    // 初始化失敗：顯示友善的錯誤畫面
+                    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 p-8 text-center">
+                        <div className="text-5xl">😢</div>
+                        <div className="text-slate-600 font-medium text-base max-w-xs">{initError}</div>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl shadow-lg transition"
+                        >
+                            🔄 重新整理
+                        </button>
+                    </div>
+                ) : (
+                    // 載入中：顯示美化的 spinner
+                    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+                        <div className="w-12 h-12 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                        <p className="text-slate-400 text-sm">正在驗證身份，請稍候...</p>
+                    </div>
+                )
             ) : viewMode === 'list' ? (
                 <>
                     <div className="w-full max-w-5xl flex justify-between mb-4 px-2 items-center">
@@ -1772,12 +2094,7 @@ const VibeAdmin = () => {
                             ) : null}
                         </div>
 
-                        <button
-                            onClick={() => setShowSettings(true)}
-                            className="text-xs text-slate-500 hover:text-emerald-500 flex items-center gap-1 transition"
-                        >
-                            ⚙️ 個人設定 ({userProfile.alias ? `@${userProfile.alias}` : '無 ID'})
-                        </button>
+
                     </div>
 
                     {isExpired && (
