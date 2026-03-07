@@ -6,6 +6,9 @@ import { ref, uploadBytes, getDownloadURL, listAll, deleteObject } from 'firebas
 import { validateHtmlCode } from '../utils/security';
 import { copyToClipboard } from '../utils/clipboard';
 
+// 用於確保全域只有一個 LIFF 初始化正在進行，避免重複呼叫導致 Load failed
+let liffInitPromise = null;
+
 // --- Constants ---
 const PREMIUM_COLORS = [
     { name: '高科技黑', hex: '#00ffff', value: '高科技黑：深邃神秘的黑色基調，搭配螢光藍或霓虹光感，展現未來科技感' },
@@ -695,6 +698,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
     const [templateKey, setTemplateKey] = useState('insurance');
     const [statusMsg, setStatusMsg] = useState('');
     const fileInputRef = useRef(null);
+    const [saveWarning, setSaveWarning] = useState(null);
 
     // Shared Fields
     const [commonData, setCommonData] = useState({
@@ -844,10 +848,14 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             const safeVal = val.replace(/"/g, '&quot;');
 
             // 1. Handle OG Tags (property="og:...")
-            const ogRegex = new RegExp(`(<meta\\s+(?:property|name)=["']og:${key}["']\\s+content=["'])(.*?)(["']\\s*/?>)`, 'i');
-            if (ogRegex.test(newHtml)) {
-                newHtml = newHtml.replace(ogRegex, `$1${safeVal}$3`);
-            } else {
+            const ogRegex = new RegExp(`(<meta\\s+(?:property|name)=["']og:${key}["']\\s+content=["'])([\\s\\S]*?)(["']\\s*/?>)`, 'ig');
+            let ogMatchCount = 0;
+            newHtml = newHtml.replace(ogRegex, (match, p1, p2, p3) => {
+                ogMatchCount++;
+                if (ogMatchCount === 1) return `${p1}${safeVal}${p3}`;
+                return '';
+            });
+            if (ogMatchCount === 0) {
                 // Insert if missing (Prepend to head for simplicity)
                 const headRegex = /<head>/i;
                 if (headRegex.test(newHtml)) {
@@ -857,10 +865,14 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
 
             // 2. Handle Standard Description
             if (key === 'description') {
-                const nameRegex = new RegExp(`(<meta\\s+name=["']description["']\\s+content=["'])(.*?)(["']\\s*/?>)`, 'i');
-                if (nameRegex.test(newHtml)) {
-                    newHtml = newHtml.replace(nameRegex, `$1${safeVal}$3`);
-                } else {
+                const nameRegex = new RegExp(`(<meta\\s+name=["']description["']\\s+content=["'])([\\s\\S]*?)(["']\\s*/?>)`, 'ig');
+                let nameMatchCount = 0;
+                newHtml = newHtml.replace(nameRegex, (match, p1, p2, p3) => {
+                    nameMatchCount++;
+                    if (nameMatchCount === 1) return `${p1}${safeVal}${p3}`;
+                    return '';
+                });
+                if (nameMatchCount === 0) {
                     const headRegex = /<head>/i;
                     if (headRegex.test(newHtml)) {
                         newHtml = newHtml.replace(headRegex, `<head>\n    <meta name="description" content="${safeVal}" />`);
@@ -870,10 +882,14 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
 
             // 3. Handle <title>
             if (key === 'title') {
-                const titleTagRegex = /<title>(.*?)<\/title>/i;
-                if (titleTagRegex.test(newHtml)) {
-                    newHtml = newHtml.replace(titleTagRegex, `<title>${val}</title>`); // Title usually doesn't need quote escape inside tag
-                } else {
+                const titleTagRegex = /<title>([\s\S]*?)<\/title>/ig;
+                let titleMatchCount = 0;
+                newHtml = newHtml.replace(titleTagRegex, (match, p1) => {
+                    titleMatchCount++;
+                    if (titleMatchCount === 1) return `<title>${val}</title>`; // Title usually doesn't need quote escape inside tag
+                    return '';
+                });
+                if (titleMatchCount === 0) {
                     const headRegex = /<head>/i;
                     if (headRegex.test(newHtml)) {
                         newHtml = newHtml.replace(headRegex, `<head>\n    <title>${val}</title>`);
@@ -957,7 +973,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         }
     };
 
-    const handleSave = async (shouldGoBack = true) => {
+    const handleSave = async (shouldGoBack = true, ignoreWarning = false) => {
         // Validate Project Alias
         if (commonData.projectAlias) {
             const isUnique = await checkProjectAlias(commonData.projectAlias);
@@ -973,11 +989,9 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             return;
         }
 
-        if (validation.hasWarning) {
-            const confirmSave = window.confirm(`警告：${validation.warningMessage}。\n\n確定要繼續儲存嗎？`);
-            if (!confirmSave) {
-                return;
-            }
+        if (validation.hasWarning && !ignoreWarning) {
+            setSaveWarning({ message: validation.warningMessage, shouldGoBack });
+            return;
         }
         try {
             setStatusMsg('正在儲存...');
@@ -1688,9 +1702,27 @@ ${commonData.requirements}
                         </div>
                     )}
 
-                    <button onClick={handleSave} className="w-full py-3 font-bold bg-green-600 hover:bg-green-500 rounded-xl text-slate-900 transition shadow-lg shadow-green-500/30">💾 儲存專案</button>
+                    <button type="button" onClick={() => handleSave(true)} className="w-full py-3 font-bold bg-green-600 hover:bg-green-500 rounded-xl text-slate-900 transition shadow-lg shadow-green-500/30">💾 儲存專案</button>
                 </div>
             </div>
+
+            {saveWarning && (
+                <div className="fixed inset-0 bg-slate-50/80 flex items-center justify-center z-[200] backdrop-blur-sm p-4">
+                    <div className="bg-white border border-slate-200 shadow-xl p-6 rounded-2xl w-full max-w-md text-center">
+                        <div className="text-5xl mb-4">⚠️</div>
+                        <h3 className="text-xl font-bold mb-2 text-slate-800">儲存警告</h3>
+                        <p className="text-slate-500 mb-6">{saveWarning.message}<br />確定要繼續儲存嗎？</p>
+                        <div className="flex gap-4">
+                            <button type="button" onClick={() => setSaveWarning(null)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">取消</button>
+                            <button type="button" onClick={() => {
+                                const goBack = saveWarning.shouldGoBack;
+                                setSaveWarning(null);
+                                handleSave(goBack, true);
+                            }} className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition shadow-lg shadow-emerald-500/30">確定儲存</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };
@@ -1810,14 +1842,22 @@ const VibeAdmin = () => {
             }
         };
 
-        // LIFF 初始化（含自動重試）
+        // LIFF 初始化（含自動重試與全域鎖定，避免重複初始化導致 Load failed）
         const initLiffWithRetry = async (retries = 1) => {
-            // 關鍵修復：LINE WebView 逾時設為 10 秒，足夠但不會讓用戶等太久
             const LIFF_TIMEOUT_MS = 10000;
+
             for (let attempt = 0; attempt <= retries; attempt++) {
                 try {
+                    // 如果尚未開始初始化，或是因為嚴重錯誤被清空，則發起新的初始化
+                    if (!liffInitPromise) {
+                        liffInitPromise = liff.init({ liffId: "2008893070-nnNXBPod" }).catch(err => {
+                            liffInitPromise = null; // 失敗則允許下一次重試
+                            throw err;
+                        });
+                    }
+
                     await Promise.race([
-                        liff.init({ liffId: "2008893070-nnNXBPod" }),
+                        liffInitPromise,
                         new Promise((_, reject) =>
                             setTimeout(() => reject(new Error('LIFF_TIMEOUT')), LIFF_TIMEOUT_MS)
                         )
@@ -1825,7 +1865,11 @@ const VibeAdmin = () => {
                     return; // 初始化成功，直接返回
                 } catch (err) {
                     console.warn(`LIFF init 第 ${attempt + 1} 次嘗試失敗:`, err.message);
-                    if (attempt === retries) throw err; // 最後一次重試也失敗，拋出錯誤
+                    if (err.message === 'LIFF_TIMEOUT') {
+                        // 逾時不一定代表失敗，可能只是網路慢。但如果我們重試，不應該重設 promise。
+                        // 所以這裡我們不做 liffInitPromise = null
+                    }
+                    if (attempt === retries) throw err; // 最後一次依然失敗
                     await new Promise(r => setTimeout(r, 1000)); // 等 1 秒再重試
                 }
             }
@@ -1874,6 +1918,8 @@ const VibeAdmin = () => {
                 // 以友善 UI 取代 alert
                 if (err.message === 'LIFF_TIMEOUT') {
                     setInitError('連線逾時，請檢查網路後點擊下方按鈕重試。');
+                } else if (err.message === 'Load failed') {
+                    setInitError('LINE 連線被阻擋或載入失敗，若使用 Safari 請確認尚未開啟防追蹤功能，或請重新整理頁面。');
                 } else {
                     setInitError(err.message || '初始化失敗，請重新開啟頁面。');
                 }

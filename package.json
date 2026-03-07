@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "deploy:app": "firebase deploy --only hosting:app",
-    "deploy:sandbox": "firebase deploy --only hosting:sandbox",
+    "deploy:sandbox": "firebase deploy --only functions,hosting:sandbox",
     "deploy:all": "firebase deploy"
   },
   "dependencies": {
