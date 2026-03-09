@@ -713,7 +713,9 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         projectAlias: project.projectAlias || '',
         useLiff: project.useLiff || false,
         liffId: project.liffId || '',
-        liffFeatures: project.liffFeatures || []
+        liffFeatures: project.liffFeatures || [],
+        enableDatabase: project.enableDatabase || false,
+        enableStorage: project.enableStorage || false
     });
 
     const checkProjectAlias = async (val) => {
@@ -1057,6 +1059,39 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
 `;
         }
 
+        let apiInstructions = '';
+        if (commonData.enableDatabase || commonData.enableStorage) {
+            apiInstructions += '\n■ 資料存取規範 (非常重要)\n1. 嚴格禁止載入或使用 Firebase SDK (例如 import { getFirestore } 等)。\n';
+            if (commonData.enableDatabase) {
+                apiInstructions += `2. API 支援完整的 CRUD 操作：
+   [新增/更新文件 (Upsert)] 使用 POST：
+   fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName', {
+       method: 'POST', body: JSON.stringify({ _id: '自訂唯一標識符(可選)', ...data }), ...headers
+   }) // 💡 提示：帶上 _id 可以避免重複新增，會以該名稱當作文件 ID 覆蓋寫入。
+   
+   [取得集合列表] 使用 GET：
+   fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName')
+   
+   [修改特定文件] 使用 PUT：
+   fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName/' + docId, { method: 'PUT', ... })
+   
+   [刪除特定文件] 使用 DELETE：
+   fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName/' + docId, { method: 'DELETE' })\n`;
+            }
+            if (commonData.enableStorage) {
+                apiInstructions += `3. 若需要讓使用者選擇並上傳圖片，請讀取檔案轉為 Base64 並使用 fetch 呼叫 Storage API：
+   fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/storage', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ fileName: file.name, fileBase64: base64String, contentType: file.type })
+   }).then(res => res.json()).then(data => { /* data.url 即為公開圖片網址 */ });\n`;
+            }
+            apiInstructions += `4. 網頁執行時可以透過以下程式碼取得目前的 projectId：
+   const projectId = document.querySelector('meta[name="x-project-id"]')?.content;
+   if (!projectId) { console.error("找不到專案 ID"); return; }
+`;
+        }
+
         let prompt = '';
         const baseInfo = `
 ■ 專案目標
@@ -1069,6 +1104,7 @@ ${commonData.projectAlias ? `專案自訂網址 ID: ${commonData.projectAlias}` 
 請使用純 HTML+CSS+JS。請優化觸控操作。
 務必包含完整的 SEO Meta Tags (og:title, og:description, og:image) 以利社群分享。
 ${liffInstructions}
+${apiInstructions}
 
 ■ 視覺設計
 1. 主色調：${commonData.mainColor}
@@ -1601,6 +1637,31 @@ ${commonData.requirements}
                             <FormTextarea label="頁面企劃與拓客機制 (可微調)" name="requirements" value={landingPageData.requirements} onChange={handleLandingPageChange} h="h-40" />
                         </div>
                     )}
+
+                    {/* 進階功能選項區塊 */}
+                    <div className="mt-8 pt-6 border-t border-slate-200">
+                        <label className="text-sm font-bold text-emerald-600 block mb-3">⚡ 進階功能 (自動加入相應的串接提示詞)</label>
+                        <div className="flex flex-col gap-3">
+                            <label className="flex items-center gap-3 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={commonData.enableDatabase}
+                                    onChange={(e) => setCommonData(prev => ({ ...prev, enableDatabase: e.target.checked }))}
+                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500"
+                                />
+                                <span className="text-sm text-slate-700 font-medium">啟用資料庫存取 (Firestore API)</span>
+                            </label>
+                            <label className="flex items-center gap-3 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={commonData.enableStorage}
+                                    onChange={(e) => setCommonData(prev => ({ ...prev, enableStorage: e.target.checked }))}
+                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500"
+                                />
+                                <span className="text-sm text-slate-700 font-medium">啟用檔案/圖片上傳 (Storage API)</span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
             </div>
 
