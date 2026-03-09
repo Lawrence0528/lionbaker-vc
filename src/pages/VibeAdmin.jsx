@@ -5,6 +5,7 @@ import { collection, addDoc, serverTimestamp, getDocs, query, where, doc, update
 import { ref, uploadBytes, getDownloadURL, listAll, deleteObject } from 'firebase/storage';
 import { validateHtmlCode } from '../utils/security';
 import { copyToClipboard } from '../utils/clipboard';
+import AgentAdmin from './AgentAdmin';
 
 // 用於確保全域只有一個 LIFF 初始化正在進行，避免重複呼叫導致 Load failed
 let liffInitPromise = null;
@@ -1796,6 +1797,7 @@ const VibeAdmin = () => {
     const [themeColor, setThemeColor] = useState('#00ffff');
     const [showSettings, setShowSettings] = useState(false);
     const [initError, setInitError] = useState(null); // LIFF/Auth 初始化錯誤訊息
+    const [activeTab, setActiveTab] = useState('projects'); // projects | line-bot
 
     // Gatekeeper State
     const [needsTerms, setNeedsTerms] = useState(false);
@@ -2200,37 +2202,72 @@ const VibeAdmin = () => {
                                 </span>
                             ) : null}
                         </div>
-
-
                     </div>
 
-                    {isExpired && (
-                        <div className="w-full max-w-5xl mb-4 p-3 bg-red-900/30 border border-red-800 rounded text-red-500 text-sm flex justify-between items-center">
-                            <span>⚠️ 您的服務已到期，目前為唯讀模式。</span>
-                            <button onClick={() => setViewMode('expire_renew')} className="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-slate-900 text-xs">立即續約</button>
+                    {/* Tabs System */}
+                    <div className="w-full max-w-5xl mb-8">
+                        <div className="flex bg-white/50 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-200/60 shadow-sm w-fit mx-auto sm:mx-0">
+                            <button
+                                onClick={() => setActiveTab('projects')}
+                                className={`px-8 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 flex items-center gap-2 ${activeTab === 'projects'
+                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
+                                    }`}
+                            >
+                                <span className="text-base text-white">📁</span>
+                                專案列表
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('line-bot')}
+                                className={`px-8 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 flex items-center gap-2 ${activeTab === 'line-bot'
+                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
+                                    }`}
+                            >
+                                <span className="text-base">🤖</span>
+                                LINE 機器人管家
+                            </button>
+                        </div>
+                    </div>
+
+                    {activeTab === 'projects' ? (
+                        <>
+                            {isExpired && (
+                                <div className="w-full max-w-5xl mb-4 p-3 bg-red-900/10 border border-red-200/50 rounded-xl text-red-500 text-sm flex justify-between items-center backdrop-blur-sm">
+                                    <div className="flex items-center gap-2">
+                                        <span>⚠️</span>
+                                        <span>您的服務已到期，目前為唯讀模式。</span>
+                                    </div>
+                                    <button onClick={() => setViewMode('expire_renew')} className="bg-red-500 hover:bg-red-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-md shadow-red-500/20">立即續約</button>
+                                </div>
+                            )}
+
+                            <ProjectList
+                                projects={projects}
+                                onCreate={() => {
+                                    if (isExpired) {
+                                        alert('服務已到期，請先輸入序號續約。');
+                                        setViewMode('expire_renew');
+                                    } else {
+                                        setShowCreateModal(true);
+                                    }
+                                }}
+                                onEdit={(p) => {
+                                    if (isExpired) {
+                                        alert('服務已到期，僅供瀏覽。');
+                                    } else {
+                                        handleEditProject(p);
+                                    }
+                                }}
+                                onDelete={handleDeleteProject}
+                                userProfile={userProfile}
+                            />
+                        </>
+                    ) : (
+                        <div className="w-full max-w-5xl">
+                            <AgentAdmin />
                         </div>
                     )}
-
-                    <ProjectList
-                        projects={projects}
-                        onCreate={() => {
-                            if (isExpired) {
-                                alert('服務已到期，請先輸入序號續約。');
-                                setViewMode('expire_renew');
-                            } else {
-                                setShowCreateModal(true); // Open the modal instead
-                            }
-                        }}
-                        onEdit={(p) => {
-                            if (isExpired) {
-                                alert('服務已到期，僅供瀏覽。');
-                            } else {
-                                handleEditProject(p);
-                            }
-                        }}
-                        onDelete={handleDeleteProject}
-                        userProfile={userProfile}
-                    />
 
                     {showCreateModal && (
                         <CreateProjectModal
@@ -2259,7 +2296,7 @@ const VibeAdmin = () => {
                     onUpdate={(updated) => setUserProfile(updated)}
                 />
             )}
-        </div>
+        </div >
     );
 };
 
