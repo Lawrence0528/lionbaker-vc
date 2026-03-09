@@ -253,19 +253,27 @@ apiApp.post('/deploy', async (req, res) => {
                     return new Response('OK', { status: 200 });
                 }
 
+                console.log("目前載入腳本總數: " + SCRIPTS.length);
+
                 for (const event of events) {
                     if (event.type === 'message' && event.message.type === 'text') {
-                        const userText = event.message.text.trim();
+                        let userText = event.message.text.trim();
+                        // 標準化：將全形中括號轉為半形，方便比對
+                        const normalizedUserText = userText.replace(/［/g, '[').replace(/］/g, ']');
                         console.log("收到使用者訊息:", userText);
                         
                         // 尋找符合的腳本
                         const matchedScript = SCRIPTS.find(s => {
                             if (!s.trigger) return false;
-                            const triggers = s.trigger.split(',').map(t => t.trim()).filter(Boolean);
-                            return triggers.some(t => userText.includes(t));
+                            // 同時支援全形與半形逗號分割
+                            const triggers = s.trigger.split(/[，,]/).map(t => t.trim()).filter(Boolean);
+                            return triggers.some(t => {
+                                // 強化比對：檢查原始文字或標準化後的文字是否包含關鍵字
+                                return userText.includes(t) || normalizedUserText.includes(t);
+                            });
                         });
                         
-                        console.log("比對結果:", matchedScript ? "有找到對應腳本" : "無設定腳本");
+                        console.log("比對結果:", matchedScript ? "有找到對應腳本 [" + matchedScript.title + "]" : "無設定腳本");
                         
                         if (matchedScript) {
                             let replyMessages = [];

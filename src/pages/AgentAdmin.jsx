@@ -185,6 +185,7 @@ const AgentAdmin = () => {
             setDeployStatus('正在讀取掛載的技能...');
             let mergedScripts = [...(currentAgent.scripts || [])];
             const mountedSkills = currentAgent.mountedSkills || [];
+            let skillScriptsCount = 0;
 
             if (mountedSkills.length > 0) {
                 for (const sid of mountedSkills) {
@@ -193,12 +194,13 @@ const AgentAdmin = () => {
                         const sData = skillSnap.data();
                         if (sData.scripts && sData.scripts.length > 0) {
                             mergedScripts.push(...sData.scripts);
+                            skillScriptsCount += sData.scripts.length;
                         }
                     }
                 }
             }
 
-            setDeployStatus('正在傳送代碼至 Cloudflare Edge 節點...');
+            setDeployStatus(`已合併 ${mergedScripts.length} 組腳本 (私有: ${currentAgent.scripts?.length || 0}, 技能: ${skillScriptsCount})\n正在傳送至 Cloudflare Edge...`);
             const finalConfig = { ...currentAgent, scripts: mergedScripts };
             const res = await fetch(backendUrl, {
                 method: 'POST',
