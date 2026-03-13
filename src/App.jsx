@@ -8,6 +8,8 @@ const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
 const VibeViewer = lazy(() => import('./pages/VibeViewer'));
 const AgentAdmin = lazy(() => import('./pages/AgentAdmin'));
 
+const FormResponseViewer = lazy(() => import('./pages/FormResponseViewer'));
+
 function App() {
   return (
     <Router>
@@ -24,6 +26,7 @@ function App() {
           <Route path="/admin" element={<SuperAdmin />} />
           <Route path="/u/:userId/:projectId" element={<VibeViewer />} />
           <Route path="/agents" element={<AgentAdmin />} />
+          <Route path="/form-responses/:projectId" element={<FormResponseViewer />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
