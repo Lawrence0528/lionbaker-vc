@@ -15,7 +15,7 @@ const SuperAdmin = () => {
 
     // License Mgmt State
     const [licenses, setLicenses] = useState([]);
-    const [genConfig, setGenConfig] = useState({ type: 'VIP', days: 30, count: 1 });
+    const [genConfig, setGenConfig] = useState({ type: 'VIP_PERSONAL', days: 30, count: 1, validUntil: '' });
     const [generatedKeys, setGeneratedKeys] = useState([]);
 
     const ALLOWED_EMAIL = 'charge0528@gmail.com';
@@ -89,11 +89,14 @@ const SuperAdmin = () => {
             const keyData = {
                 code,
                 type: genConfig.type,
-                days: parseInt(genConfig.days),
+                days: parseInt(genConfig.days) || 0,
                 status: 'active',
                 createdBy: userProfile.userId,
                 createdAt: serverTimestamp()
             };
+            if (genConfig.type === 'VIP_CLASS' && genConfig.validUntil) {
+                keyData.validUntil = genConfig.validUntil;
+            }
             newKeys.push(code);
             batchPromises.push(addDoc(collection(db, 'license_keys'), keyData));
         }
@@ -217,13 +220,25 @@ const SuperAdmin = () => {
                                         onChange={e => setGenConfig({ ...genConfig, type: e.target.value })}
                                         className="w-full bg-black border border-gray-700 rounded p-2 text-white"
                                     >
-                                        <option value="VIP">VIP (限時)</option>
-                                        <option value="SVIP">SVIP (永久)</option>
+                                        <option value="VIP_CLASS">VIP 課堂用 (限時 / 可重複使用)</option>
+                                        <option value="VIP_PERSONAL">VIP 個人用 (限時 / 一次性)</option>
+                                        <option value="SVIP">SVIP 終生會員 (永久 / 一次性)</option>
                                     </select>
                                 </div>
-                                {genConfig.type === 'VIP' && (
+                                {genConfig.type === 'VIP_CLASS' && (
                                     <div>
-                                        <label className="block text-gray-400 mb-1">效期天數</label>
+                                        <label className="block text-gray-400 mb-1">最晚輸入期限 (選填)</label>
+                                        <input
+                                            type="date"
+                                            value={genConfig.validUntil}
+                                            onChange={e => setGenConfig({ ...genConfig, validUntil: e.target.value })}
+                                            className="w-full bg-black border border-gray-700 rounded p-2 text-white"
+                                        />
+                                    </div>
+                                )}
+                                {genConfig.type !== 'SVIP' && (
+                                    <div>
+                                        <label className="block text-gray-400 mb-1">給予效期天數</label>
                                         <input
                                             type="number"
                                             value={genConfig.days}
@@ -286,7 +301,13 @@ const SuperAdmin = () => {
                                         {licenses.map(l => (
                                             <tr key={l.id} className="border-b border-gray-800">
                                                 <td className="p-2 font-mono text-gray-300">{l.code}</td>
-                                                <td className="p-2">{l.type === 'SVIP' ? '♾️' : `${l.days}d`}</td>
+                                                <td className="p-2">
+                                                    {l.type === 'SVIP' ? '♾️ SVIP' : `${l.days}天`}
+                                                    <div className="text-[10px] text-gray-500 mt-0.5">
+                                                        {l.type === 'VIP_CLASS' ? '課堂用(多人)' : l.type === 'VIP_PERSONAL' ? '個人用(單次)' : l.type === 'SVIP' ? '一次性' : '通用'}
+                                                        {l.validUntil && <span> | 期限: {l.validUntil}</span>}
+                                                    </div>
+                                                </td>
                                                 <td className="p-2">
                                                     <span className={`text-xs px-1 rounded ${l.status === 'active' ? 'bg-green-900 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
                                                         {l.status === 'active' ? '有效' : '已兌換'}

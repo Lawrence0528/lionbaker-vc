@@ -489,11 +489,11 @@ const ActivationScreen = ({ user, onRedeem, mode = 'activate' }) => {
         <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
             <div className="max-w-md w-full bg-white p-8 rounded-2xl border border-slate-200 text-center">
                 <div className="text-4xl mb-4">🔑</div>
-                <h2 className="text-2xl font-bold text-slate-900 mb-2">{mode === 'activate' ? '啟用您的帳號' : '您的服務已到期'}</h2>
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">{mode === 'activate' ? '啟用您的帳號' : '請輸入您的金鑰'}</h2>
                 <p className="text-slate-500 mb-6 text-sm">
                     {mode === 'activate'
                         ? '初次使用請輸入產品序號以啟用服務。'
-                        : '請輸入新的序號以繼續使用完整功能。您仍可瀏覽現有專案，但無法編輯或新增。'}
+                        : '請輸入新的序號以啟用或延長服務效期。'}
                 </p>
 
                 <input
@@ -514,8 +514,7 @@ const ActivationScreen = ({ user, onRedeem, mode = 'activate' }) => {
 
                 {mode === 'expire' && (
                     <div className="mt-4 pt-4 border-t border-slate-200">
-                        <p className="text-xs text-slate-400 mb-2">或者</p>
-                        <a href="/" className="text-sm text-slate-500 hover:text-slate-900 underline">暫時回到列表 (唯讀模式)</a>
+                        <a href="/" className="text-sm text-slate-500 hover:text-slate-900 underline">回到列表</a>
                     </div>
                 )}
             </div>
@@ -1837,7 +1836,8 @@ const VibeAdmin = () => {
 
                     const calcDefaultExpiry = () => {
                         const d = new Date();
-                        d.setDate(d.getDate() + 3);
+                        //新人有7天免費
+                        d.setDate(d.getDate() + 7);
                         d.setHours(23, 59, 59);
                         return d;
                     };
@@ -2055,6 +2055,18 @@ const VibeAdmin = () => {
             throw new Error('您已兌換過此金鑰，無法重複兌換累積天數');
         }
 
+        if (keyData.type === 'VIP_CLASS' && keyData.validUntil) {
+            const validUntilDate = new Date(keyData.validUntil + 'T23:59:59');
+            if (new Date() > validUntilDate) {
+                throw new Error('此金鑰已超過最後可輸入期限');
+            }
+        }
+
+        const isSingleUse = keyData.type === 'VIP_PERSONAL' || keyData.type === 'SVIP' || !keyData.type || keyData.type === 'VIP';
+        if (isSingleUse && keyData.redeemedUsers && keyData.redeemedUsers.length >= 1) {
+            throw new Error('此序號已被使用完畢 (限單次使用)');
+        }
+
         // Calculate new expiry
         let newExpiry = null;
         let isSvip = false;
@@ -2075,11 +2087,17 @@ const VibeAdmin = () => {
             newExpiry = baseDate;
         }
 
-        // Transactional update (simulated with Promise.all for now as it's simpler)
-        await updateDoc(doc(db, 'license_keys', keyDoc.id), {
+        const keyUpdates = {
             redeemedUsers: arrayUnion(userProfile.userId),
             lastRedeemedAt: serverTimestamp()
-        });
+        };
+
+        if (isSingleUse) {
+            keyUpdates.status = 'redeemed';
+        }
+
+        // Transactional update (simulated with Promise.all for now as it's simpler)
+        await updateDoc(doc(db, 'license_keys', keyDoc.id), keyUpdates);
 
         const updates = {
             isSvip: isSvip || userProfile.isSvip || false, // SVIP sticks if you already have it, ensure not undefined
@@ -2192,7 +2210,7 @@ const VibeAdmin = () => {
             ) : viewMode === 'list' ? (
                 <>
                     <div className="w-full max-w-5xl flex justify-between mb-4 px-2 items-center">
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center flex-wrap">
                             {userProfile.isSvip ? (
                                 <span className="text-yellow-400 font-bold border border-yellow-500/50 bg-yellow-500/10 px-2 py-1 rounded text-xs">♾️ SVIP</span>
                             ) : userProfile.expiryDate ? (
@@ -2201,6 +2219,11 @@ const VibeAdmin = () => {
                                     (到期日: {new Date(userProfile.expiryDate?.seconds ? userProfile.expiryDate.seconds * 1000 : userProfile.expiryDate).toISOString().split('T')[0]})
                                 </span>
                             ) : null}
+                            <button
+                                onClick={() => setViewMode('expire_renew')}
+                                className="ml-2 bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 border border-emerald-500/50 px-3 py-1 rounded text-xs transition-all shadow-md">
+                                + 輸入金鑰
+                            </button>
                         </div>
                     </div>
 

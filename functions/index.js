@@ -438,16 +438,16 @@ exports.renderSandbox = onRequest(async (req, res) => {
         // 順便注入 projectId 給前端 javascript 調用 API
         if (htmlResponse.includes('<meta property="og:image"')) {
             htmlResponse = htmlResponse.replace('</head>', `
-                    < meta property="og:image:width" content="1200" />
+    <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:type" content="website" />
     <meta name="x-project-id" content="${refProjectId}" />
-</head > `);
+</head>`);
         } else {
             // 若沒有 og:image，也強制注入 meta id
             htmlResponse = htmlResponse.replace('</head>', `
-            < meta name = "x-project-id" content = "${refProjectId}" />
-</head > `);
+    <meta name="x-project-id" content="${refProjectId}" />
+</head>`);
         }
 
         // Return full HTML string
