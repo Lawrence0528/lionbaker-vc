@@ -210,14 +210,265 @@ const FormTextarea = ({ label, name, value, onChange, h = "h-24", mb = "mb-0", p
         <textarea name={name} value={value} onChange={onChange} placeholder={placeholder} className={`rounded p-2 text-sm outline-none resize-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 w-full ${h}`} />
     </div>
 );
-const FormSelect = ({ label, name, value, onChange, children }) => (
+const FormSelect = ({ label, name, value, onChange, children, disabled }) => (
     <div className="flex flex-col">
         <label className="text-xs text-slate-500 mb-1">{label}</label>
-        <select name={name} value={value} onChange={onChange} className="rounded p-2 text-sm outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 cursor-pointer w-full">
+        <select disabled={disabled} name={name} value={value} onChange={onChange} className={`rounded p-2 text-sm outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 w-full ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             {children}
         </select>
     </div>
 );
+
+// --- 常見欄位中英對照表 ---
+const FIELD_MAPPING = {
+    name: '姓名',
+    phone: '電話',
+    email: '信箱',
+    address: '地址',
+    score: '滿意度/評分',
+    learning_reflection: '學習心得',
+    impressive_part: '印象深刻的部分',
+    suggestions: '建議與回饋',
+    whisper: '悄悄話',
+    submitted_at: '提交時間',
+    application: '應用場景/用途',
+    photo_url: '照片網址/截圖',
+    company: '公司名稱',
+    title: '職稱'
+};
+
+const translateField = (key) => {
+    const lowerKey = key.toLowerCase();
+    return FIELD_MAPPING[lowerKey] || key;
+};
+
+// --- Form Data Viewer ---
+const FormDataViewer = ({ projectId }) => {
+    const [data, setData] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [selectedIndex, setSelectedIndex] = useState(null); // 改成紀錄 index
+
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            const q = query(collection(db, `projects/${projectId}/form_responses`));
+            const snap = await getDocs(q);
+            const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // sort by _createdAt desc
+            docs.sort((a, b) => {
+                const tA = a._createdAt?.seconds || 0;
+                const tB = b._createdAt?.seconds || 0;
+                return tB - tA;
+            });
+            setData(docs);
+            setSelectedIndex(null);
+        } catch (e) {
+            console.error(e);
+            alert('無法讀取資料');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleExportCSV = () => {
+        if (data.length === 0) return;
+        
+        // 收集所有的 keys
+        const allKeys = new Set();
+        data.forEach(item => {
+            Object.keys(item).forEach(key => {
+                if (!key.startsWith('_') && key !== 'id') {
+                    allKeys.add(key);
+                }
+            });
+        });
+        
+        const headers = ['建立時間', ...Array.from(allKeys).map(translateField)];
+        
+        const csvRows = [];
+        csvRows.push(headers.join(',')); // 加入標題行
+        
+        data.forEach(item => {
+            const row = [];
+            // 時間
+            row.push(item._createdAt?.seconds ? `"${new Date(item._createdAt.seconds * 1000).toLocaleString()}"` : '"未知"');
+            
+            // 其他欄位
+            Array.from(allKeys).forEach(key => {
+                let val = item[key];
+                if (val === undefined || val === null) val = '';
+                // 處理字串中的換行和雙引號
+                let valStr = String(val).replace(/"/g, '""');
+                row.push(`"${valStr}"`);
+            });
+            csvRows.push(row.join(','));
+        });
+        
+        const csvString = "\uFEFF" + csvRows.join('\n'); // 加上 BOM 讓 Excel 正確識別 UTF-8
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `form_responses_${projectId}_${new Date().getTime()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, [projectId]);
+
+    const handlePrev = () => {
+        if (selectedIndex !== null && selectedIndex > 0) {
+            setSelectedIndex(selectedIndex - 1);
+        }
+    };
+
+    const handleNext = () => {
+        if (selectedIndex !== null && selectedIndex < data.length - 1) {
+            setSelectedIndex(selectedIndex + 1);
+        }
+    };
+
+    const selectedItem = selectedIndex !== null ? data[selectedIndex] : null;
+
+    return (
+        <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 mt-6 animate-fade-in-up md:col-span-1 lg:col-span-2">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3 flex-wrap gap-2">
+                <h2 className="text-xl font-bold text-emerald-500">6. 填寫資料瀏覽 (form_responses)</h2>
+                <div className="flex gap-2">
+                    <button onClick={handleExportCSV} disabled={loading || data.length === 0} className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50">
+                        📥 匯出 CSV
+                    </button>
+                    <button onClick={fetchData} disabled={loading} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50">
+                        🔄 重新整理
+                    </button>
+                </div>
+            </div>
+            {loading ? (
+                <div className="text-center py-8 text-slate-500 text-sm">載入中...</div>
+            ) : data.length === 0 ? (
+                <div className="text-center py-10 bg-slate-50 border border-slate-100 rounded-lg text-slate-400 text-sm italic">
+                    尚無使用者填寫的資料
+                </div>
+            ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[500px] overflow-y-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                        <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                            <tr>
+                                <th className="p-3 border-b border-slate-200 font-bold text-slate-600 whitespace-nowrap hidden md:table-cell">🕒 提交時間</th>
+                                <th className="p-3 border-b border-slate-200 font-bold text-slate-600 whitespace-nowrap">預覽內容</th>
+                                <th className="p-3 border-b border-slate-200 font-bold text-slate-600 whitespace-nowrap text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-100">
+                            {data.map((item, idx) => {
+                                const cleanData = Object.fromEntries(Object.entries(item).filter(([k]) => !k.startsWith('_') && k !== 'id'));
+                                const keys = Object.keys(cleanData);
+                                const previewKeys = keys.slice(0, 3);
+                                return (
+                                    <tr key={item.id} onClick={() => setSelectedIndex(idx)} className="hover:bg-emerald-50/50 cursor-pointer transition-colors group">
+                                        <td className="p-3 text-slate-500 font-mono text-xs whitespace-nowrap hidden md:table-cell align-top">
+                                            {item._createdAt?.seconds ? new Date(item._createdAt.seconds * 1000).toLocaleString() : '未知時間'}
+                                        </td>
+                                        <td className="p-3 align-top max-w-xs sm:max-w-md lg:max-w-xl">
+                                            <div className="flex flex-col gap-1">
+                                                {/* 手機版顯示時間 */}
+                                                <div className="text-xs text-slate-400 font-mono mb-1 md:hidden">
+                                                    {item._createdAt?.seconds ? new Date(item._createdAt.seconds * 1000).toLocaleString() : '未知時間'}
+                                                </div>
+                                                {previewKeys.map(k => (
+                                                    <div key={k} className="flex gap-2 text-sm overflow-hidden text-ellipsis">
+                                                        <span className="font-bold text-slate-600 shrink-0">{translateField(k)}:</span> 
+                                                        <span className="text-slate-500 truncate">{String(cleanData[k])}</span>
+                                                    </div>
+                                                ))}
+                                                {keys.length > 3 && (
+                                                    <div className="text-xs font-bold text-emerald-500 mt-1">...及其他 {keys.length - 3} 個欄位</div>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="p-3 text-right text-emerald-600 font-bold align-middle whitespace-nowrap">
+                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">查看詳情 &rarr;</span>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {selectedItem && (
+                <div className="fixed inset-0 bg-slate-900/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedIndex(null)}>
+                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                        
+                        {/* Header */}
+                        <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50/80 backdrop-blur-md">
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-800">表單詳細內容</h3>
+                                <div className="text-xs text-slate-500 mt-1 font-mono">
+                                    {selectedItem._createdAt?.seconds ? new Date(selectedItem._createdAt.seconds * 1000).toLocaleString() : '未知時間'}
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={handlePrev} disabled={selectedIndex === 0} className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30 disabled:hover:bg-white disabled:hover:border-slate-200 disabled:hover:text-slate-600">
+                                    &larr; 上一筆
+                                </button>
+                                <button onClick={handleNext} disabled={selectedIndex === data.length - 1} className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30 disabled:hover:bg-white disabled:hover:border-slate-200 disabled:hover:text-slate-600">
+                                    下一筆 &rarr;
+                                </button>
+                                <div className="w-px h-8 bg-slate-200 mx-2"></div>
+                                <button onClick={() => setSelectedIndex(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-red-500 transition font-bold text-xl leading-none">&times;</button>
+                            </div>
+                        </div>
+
+                        {/* Content Body (Grid Layout) */}
+                        <div className="p-6 overflow-y-auto flex-1 bg-white">
+                            <div className="space-y-4">
+                                {Object.entries(selectedItem)
+                                    .filter(([k]) => !k.startsWith('_') && k !== 'id')
+                                    .map(([k, v]) => (
+                                        <div key={k} className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4 border-b border-slate-100 pb-4 last:border-0 last:pb-0 items-start">
+                                            <div className="col-span-1 text-sm font-bold text-slate-500 uppercase tracking-wider pt-1 flex items-center md:justify-end md:text-right">
+                                                {/* 顯示中文對應，如果沒有則顯示原 key 的首字大寫（或是原始 key） */}
+                                                {translateField(k)}
+                                            </div>
+                                            <div className="col-span-1 md:col-span-2">
+                                                {typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://')) ? (
+                                                    v.match(/\.(jpeg|jpg|gif|png|webp)$/i) ? (
+                                                        <a href={v} target="_blank" rel="noreferrer" className="block max-w-sm overflow-hidden rounded-lg border border-slate-200 mt-1 shadow-sm">
+                                                            <img src={v} alt={translateField(k)} className="w-full h-auto object-cover hover:scale-105 transition-transform" />
+                                                        </a>
+                                                    ) : (
+                                                        <a href={v} target="_blank" rel="noreferrer" className="text-emerald-500 hover:text-emerald-600 font-medium hover:underline break-all text-sm inline-flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded">
+                                                            🔗 點擊開啟連結
+                                                        </a>
+                                                    )
+                                                ) : (
+                                                    <div className="text-base text-slate-800 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                        {String(v)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 border-t border-slate-100 bg-slate-50 text-right">
+                            <button onClick={() => setSelectedIndex(null)} className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg shadow-sm transition">
+                                關閉
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 // --- User Settings Modal ---
 const UserSettings = ({ user, onClose, onUpdate }) => {
@@ -388,6 +639,7 @@ const SetupAliasScreen = ({ onSave }) => {
 // --- Create Project Modal ---
 const CreateProjectModal = ({ userProfile, defaultName, onClose, onCreate }) => {
     const [name, setName] = useState(defaultName);
+    const [projectType, setProjectType] = useState('website');
     const [projectAlias, setProjectAlias] = useState('');
     const [loading, setLoading] = useState(false);
 
@@ -411,7 +663,7 @@ const CreateProjectModal = ({ userProfile, defaultName, onClose, onCreate }) => 
                 return;
             }
             // Proceed to create
-            await onCreate({ name, projectAlias });
+            await onCreate({ name, projectAlias, projectType });
         } catch (e) {
             console.error(e);
             alert('建立前檢查失敗');
@@ -440,6 +692,21 @@ const CreateProjectModal = ({ userProfile, defaultName, onClose, onCreate }) => 
                             placeholder="例如: 2026年行銷活動"
                             className="rounded-lg p-3 text-base outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
                         />
+                    </div>
+                    <div className="flex flex-col">
+                        <label className="text-sm text-slate-600 font-bold mb-1">專案類型</label>
+                        <select
+                            value={projectType}
+                            onChange={(e) => setProjectType(e.target.value)}
+                            className="rounded-lg p-3 text-base outline-none bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 cursor-pointer"
+                        >
+                            <option value="landingPage">🚀 Landing Page (品牌/店家)</option>
+                            <option value="website">🌐 一般網站</option>
+                            <option value="interactive_tool">🎯 互動式拓客工具</option>
+                            <option value="namecard">📇 電子名片</option>
+                            <option value="game">🎮 Web 小遊戲</option>
+                            <option value="form">📝 電子表單</option>
+                        </select>
                     </div>
                     <div className="flex flex-col">
                         <label className="text-sm text-slate-600 font-bold mb-1">專案自訂 ID (Project Alias)</label>
@@ -573,10 +840,19 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
         <div className="bg-white border border-slate-200 shadow-xl p-5 rounded-xl hover:bg-slate-50 transition group relative flex flex-col h-full">
             <div className="flex justify-between items-start mb-3">
                 <div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded border mb-2 inline-block ${project.type === 'game' ? 'border-pink-500 text-pink-400' :
-                        project.type === 'namecard' ? 'border-blue-500 text-blue-400' : 'border-green-500 text-green-400'
+                    <span className={`text-[10px] px-2 py-0.5 rounded border mb-2 inline-block ${project.type === 'game' ? 'border-pink-500 text-pink-500' :
+                        project.type === 'namecard' ? 'border-blue-500 text-blue-500' :
+                        project.type === 'form' ? 'border-amber-500 text-amber-500' :
+                        project.type === 'interactive_tool' ? 'border-purple-500 text-purple-500' :
+                        project.type === 'landingPage' ? 'border-indigo-500 text-indigo-500' :
+                        'border-green-500 text-green-500'
                         }`}>
-                        {project.type === 'game' ? 'Web 小遊戲' : project.type === 'namecard' ? '電子名片' : '一般網站'}
+                        {project.type === 'game' ? '🎮 Web 小遊戲' : 
+                         project.type === 'namecard' ? '📇 電子名片' : 
+                         project.type === 'form' ? '📝 電子表單' : 
+                         project.type === 'interactive_tool' ? '🎯 互動式工具' :
+                         project.type === 'landingPage' ? '🚀 Landing Page' :
+                         '🌐 一般網站'}
                     </span>
                     <h3 className="font-bold text-lg leading-tight text-slate-900 mb-1">{project.name}</h3>
 
@@ -782,6 +1058,11 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         requirements: project.requirements || LANDING_PAGE_TEMPLATES['cafe'].requirements
     });
 
+    // Form State
+    const [formData, setFormData] = useState({
+        requirements: project.requirements || '表單欄位要求：\n1. 姓名\n2. 電話\n3. Email\n4. 留言內容'
+    });
+
     // Images
     const [uploadedImages, setUploadedImages] = useState(project.imageUrls ? project.imageUrls.map(url => ({ url, name: 'Image' })) : []);
     const [uploading, setUploading] = useState(false);
@@ -917,6 +1198,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
     const handleCardChange = (e) => setCardData(prev => ({ ...prev, [e.target.name]: e.target.value }));
     const handleGameChange = (e) => setGameData(prev => ({ ...prev, [e.target.name]: e.target.value }));
     const handleLandingPageChange = (e) => setLandingPageData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const handleFormChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
     const handleFilesUpload = async (e) => {
         if (!e.target.files || e.target.files.length === 0) return;
@@ -1000,6 +1282,8 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             const docData = {
                 ...commonData,
                 type: projectType,
+                enableDatabase: projectType === 'form' ? true : commonData.enableDatabase,
+                enableStorage: projectType === 'form' ? true : commonData.enableStorage,
                 imageUrls: uploadedImages.map(img => img.url),
                 updatedAt: serverTimestamp(),
                 // Use first image as thumbnail
@@ -1011,6 +1295,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             else if (projectType === 'game') Object.assign(docData, gameData);
             else if (projectType === 'interactive_tool') Object.assign(docData, interactiveData);
             else if (projectType === 'landingPage') Object.assign(docData, landingPageData);
+            else if (projectType === 'form') Object.assign(docData, formData);
 
             await updateDoc(doc(db, 'projects', project.id), docData);
 
@@ -1060,9 +1345,12 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         }
 
         let apiInstructions = '';
-        if (commonData.enableDatabase || commonData.enableStorage) {
+        const isDbEnabled = projectType === 'form' || commonData.enableDatabase;
+        const isStorageEnabled = projectType === 'form' || commonData.enableStorage;
+
+        if (isDbEnabled || isStorageEnabled) {
             apiInstructions += '\n■ 資料存取規範 (非常重要)\n1. 嚴格禁止載入或使用 Firebase SDK (例如 import { getFirestore } 等)。\n';
-            if (commonData.enableDatabase) {
+            if (isDbEnabled) {
                 apiInstructions += `2. API 支援完整的 CRUD 操作：
    [新增/更新文件 (Upsert)] 使用 POST：
    fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName', {
@@ -1078,7 +1366,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
    [刪除特定文件] 使用 DELETE：
    fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName/' + docId, { method: 'DELETE' })\n`;
             }
-            if (commonData.enableStorage) {
+            if (isStorageEnabled) {
                 apiInstructions += `3. 若需要讓使用者選擇並上傳圖片，請讀取檔案轉為 Base64 並使用 fetch 呼叫 Storage API：
    fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/storage', {
        method: 'POST',
@@ -1185,6 +1473,18 @@ ${landingPageData.requirements}
 3. UI 質感要求：現代化風格，適當運用卡片式設計，採用標準 Flexbox 佈局，請使用清晰易讀的大型按鈕 (CTA)。
 4. 所有的按鈕、互動必須明確引導使用者了解品牌並點擊購買或加好友。
 `;
+        } else if (projectType === 'form') {
+            prompt = `【電子表單開發需求單】
+${baseInfo}
+■ 表單與資料處理需求
+${formData.requirements}
+
+■ 開發與 UI 嚴格規範
+1. 必須是 RWD 手機優先的單頁表單。
+2. 表單提交時，必須使用上方提供的「資料存取規範 POST API」將資料寫入至 \`form_responses\` 這個 collection 中 (不要更改集合名稱)。
+3. 欄位的 name 或 key 請使用小寫英文（例如 name, phone, email, message）。
+4. 提交後請給予明確的成功提示（例如：跳轉感謝頁或顯示彈出視窗）。
+`;
         } else {
             prompt = `【網站開發需求單】
 ${baseInfo}
@@ -1242,12 +1542,13 @@ ${commonData.requirements}
                         </div>
                     </div> */}
                     <div className="space-y-4">
-                        <FormSelect label="專案類型" value={projectType} onChange={(e) => setProjectType(e.target.value)}>
+                        <FormSelect label="專案類型 (建立後不可修改)" value={projectType} onChange={(e) => setProjectType(e.target.value)} disabled={true}>
                             <option value="landingPage">🚀 Landing Page (品牌/店家)</option>
                             <option value="website">🌐 一般網站</option>
                             <option value="interactive_tool">🎯 互動式拓客工具</option>
                             <option value="namecard">📇 電子名片</option>
                             <option value="game">🎮 Web 小遊戲</option>
+                            <option value="form">📝 電子表單</option>
                         </FormSelect>
                         <FormInput label="專案名稱" name="name" value={commonData.name} onChange={handleCommonChange} />
 
@@ -1469,6 +1770,11 @@ ${commonData.requirements}
                             <FormTextarea label="玩法規則" name="requirements" value={gameData.requirements} onChange={handleGameChange} h="h-32" />
                         </div>
                     )}
+                    {projectType === 'form' && (
+                        <div className="space-y-4">
+                            <FormTextarea label="表單需求與欄位描述" name="requirements" value={formData.requirements} onChange={handleFormChange} h="h-48" />
+                        </div>
+                    )}
                     {projectType === 'website' && (
                         <FormTextarea label="網站需求描述" name="requirements" value={commonData.requirements} onChange={handleCommonChange} h="h-48" />
                     )}
@@ -1645,18 +1951,20 @@ ${commonData.requirements}
                             <label className="flex items-center gap-3 cursor-pointer select-none">
                                 <input
                                     type="checkbox"
-                                    checked={commonData.enableDatabase}
+                                    checked={projectType === 'form' || commonData.enableDatabase}
                                     onChange={(e) => setCommonData(prev => ({ ...prev, enableDatabase: e.target.checked }))}
-                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500"
+                                    disabled={projectType === 'form'}
+                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500 disabled:opacity-50"
                                 />
                                 <span className="text-sm text-slate-700 font-medium">啟用資料庫存取 (Firestore API)</span>
                             </label>
                             <label className="flex items-center gap-3 cursor-pointer select-none">
                                 <input
                                     type="checkbox"
-                                    checked={commonData.enableStorage}
+                                    checked={projectType === 'form' || commonData.enableStorage}
                                     onChange={(e) => setCommonData(prev => ({ ...prev, enableStorage: e.target.checked }))}
-                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500"
+                                    disabled={projectType === 'form'}
+                                    className="w-5 h-5 accent-emerald-500 rounded border-gray-300 focus:ring-emerald-500 disabled:opacity-50"
                                 />
                                 <span className="text-sm text-slate-700 font-medium">啟用檔案/圖片上傳 (Storage API)</span>
                             </label>
@@ -1765,6 +2073,10 @@ ${commonData.requirements}
 
                     <button type="button" onClick={() => handleSave(true)} className="w-full py-3 font-bold bg-green-600 hover:bg-green-500 rounded-xl text-slate-900 transition shadow-lg shadow-green-500/30">💾 儲存專案</button>
                 </div>
+                
+                {projectType === 'form' && (
+                    <FormDataViewer projectId={project.id} />
+                )}
             </div>
 
             {saveWarning && (
@@ -2123,11 +2435,11 @@ const VibeAdmin = () => {
 
     if (isExpired && viewMode !== 'list') return <ActivationScreen user={userProfile} onRedeem={handleRedeemCode} mode="expire" />;
 
-    const handleCreateProject = async ({ name, projectAlias }) => {
+    const handleCreateProject = async ({ name, projectAlias, projectType }) => {
         if (!userProfile) return;
         const newDoc = {
             name: name,
-            type: 'website',
+            type: projectType,
             userId: userProfile.userId,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
