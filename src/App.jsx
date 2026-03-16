@@ -6,9 +6,7 @@ import './App.css';
 const Home = lazy(() => import('./pages/home'));
 const SuperAdmin = lazy(() => import('./pages/super-admin'));
 const SandboxViewer = lazy(() => import('./pages/SandboxViewer'));
-const AgentAdmin = lazy(() => import('./pages/agent'));
-
-const FormResponseViewer = lazy(() => import('./pages/FormResponseViewer'));
+const LineAgent = lazy(() => import('./pages/agent'));
 
 // Vibe Coding 報名系統與後台（獨立於主站）
 const Signup = lazy(() => import('./pages/singup/Signup'));
@@ -29,8 +27,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/admin" element={<SuperAdmin />} />
           <Route path="/u/:userId/:projectId" element={<SandboxViewer />} />
-          <Route path="/agents" element={<AgentAdmin />} />
-          <Route path="/form-responses/:projectId" element={<FormResponseViewer />} />
+          <Route path="/lineAgent" element={<LineAgent />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/signup/admin" element={<SignupAdmin />} />
           {/* 預設重新導向 */}

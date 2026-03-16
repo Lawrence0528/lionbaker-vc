@@ -112,7 +112,7 @@ lionbaker-vc/
 | `/` | Home | 靈感烘焙機首頁，專案列表與建立 |
 | `/admin` | SuperAdmin | 超級管理員（使用者與授權金鑰管理） |
 | `/u/:userId/:projectId` | SandboxViewer | 專案沙盒預覽（iframe 顯示 HTML） |
-| `/agents` | AgentAdmin | LINE Bot 機器人與技能管理 |
+| `/lineAgent` | LineAgent | LINE Bot 機器人與技能管理 |
 | `/form-responses/:projectId` | FormResponseViewer | 專案表單回應檢視 |
 | `/signup` | Signup | Vibe Coding 學員報名表單 |
 | `/signup/admin` | SignupAdmin | Vibe Coding 報名後台 |

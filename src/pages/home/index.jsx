@@ -25,6 +25,7 @@ import { TermsModal, SetupAliasScreen, ActivationScreen, BannedScreen } from './
 import CreateProjectModal from './components/CreateProjectModal';
 import ProjectList from './components/ProjectList';
 import ProjectEditor from './components/ProjectEditor';
+import FormResponseViewer from './components/FormResponseViewer';
 import UserSettings from './components/UserSettings';
 import AgentAdmin from '../agent';
 import SuperAdmin from '../super-admin';
@@ -314,6 +315,11 @@ const Home = () => {
         setThemeColor(color);
     };
 
+    const handleViewFormResponses = (project) => {
+        setCurrentProject(project);
+        setViewMode('formResponses');
+    };
+
     const handleDeleteProject = async (id) => {
         try {
             await deleteDoc(doc(db, 'projects', id));
@@ -336,9 +342,11 @@ const Home = () => {
 
     return (
         <div className="min-h-screen font-sans flex flex-col items-center px-2 py-3 transition-all duration-700 ease-in-out text-slate-700">
-            <div className="flex flex-col sm:flex-row items-center gap-3 mb-6 mt-4">
-                <h1 className="text-3xl font-bold text-emerald-500 drop-shadow-sm">靈感烘焙機 V1</h1>
-            </div>
+            {viewMode !== 'formResponses' && (
+                <div className="flex flex-col sm:flex-row items-center gap-3 mb-6 mt-4">
+                    <h1 className="text-3xl font-bold text-emerald-500 drop-shadow-sm">靈感烘焙機 V1</h1>
+                </div>
+            )}
 
             {!userProfile ? (
                 initError ? (
@@ -446,6 +454,10 @@ const Home = () => {
                                     else handleEditProject(p);
                                 }}
                                 onDelete={handleDeleteProject}
+                                onViewFormResponses={(p) => {
+                                    setCurrentProject(p);
+                                    setViewMode('formResponses');
+                                }}
                                 userProfile={userProfile}
                             />
                         </>
@@ -469,6 +481,12 @@ const Home = () => {
                 </>
             ) : viewMode === 'expire_renew' ? (
                 <ActivationScreen user={userProfile} onRedeem={handleRedeemCode} mode="expire" />
+            ) : viewMode === 'formResponses' && currentProject ? (
+                <FormResponseViewer
+                    projectId={currentProject.id}
+                    projectName={currentProject.name}
+                    onBack={() => setViewMode('list')}
+                />
             ) : (
                 <ProjectEditor
                     project={currentProject}

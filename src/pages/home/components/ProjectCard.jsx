@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import liff from '@line/liff';
 
 const getSeoData = (html) => {
@@ -13,12 +12,11 @@ const getSeoData = (html) => {
     };
 };
 
-const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
+const ProjectCard = ({ project, onEdit, onDelete, onViewFormResponses, userProfile }) => {
     const seo = useMemo(() => (project.htmlCode ? getSeoData(project.htmlCode) : null), [project.htmlCode]);
     const userParam = userProfile?.alias || project.userAlias || project.userId;
     const projectParam = project.projectAlias || project.id;
     const [timestamp] = useState(() => project.updatedAt?.seconds ?? Math.floor(Date.now() / 1000));
-    const navigate = useNavigate();
     const [copyLinkMsg, setCopyLinkMsg] = useState('');
 
     const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}?t=${timestamp}`;
@@ -106,8 +104,11 @@ const ProjectCard = ({ project, onEdit, onDelete, userProfile }) => {
                     <button onClick={handleCopyLink} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded-lg text-center text-sm transition flex items-center justify-center gap-2">
                         {copyLinkMsg ? <span className="text-emerald-600 font-bold">{copyLinkMsg}</span> : <>📋 複製連結</>}
                     </button>
-                    {project.type === 'form' && (
-                        <button onClick={() => navigate(`/form-responses/${project.id}`)} className="w-full py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/20 rounded-lg text-center text-sm transition flex items-center justify-center gap-2">
+                    {project.type === 'form' && onViewFormResponses && (
+                        <button
+                            onClick={() => onViewFormResponses(project)}
+                            className="w-full py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/20 rounded-lg text-center text-sm transition flex items-center justify-center gap-2"
+                        >
                             📊 填寫資料瀏覽
                         </button>
                     )}

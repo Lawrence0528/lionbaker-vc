@@ -1,6 +1,9 @@
+/**
+ * FormResponseViewer - 表單回覆瀏覽器（隸屬於 Home）
+ * 讀取 projects/{projectId}/form_responses 並顯示中英對照的填寫資料
+ */
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
+import { db } from '../../../firebase';
 import { collection, getDocs, query } from 'firebase/firestore';
 
 // --- 常見欄位中英對照表 ---
@@ -26,28 +29,21 @@ const translateField = (key) => {
     return FIELD_MAPPING[lowerKey] || key;
 };
 
-const FormResponseViewer = () => {
-    const { projectId } = useParams();
-    const navigate = useNavigate();
+/**
+ * @param {{ projectId: string; onBack?: () => void; projectName?: string }} props
+ */
+const FormResponseViewer = ({ projectId, onBack, projectName = '' }) => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(null);
-    const [projectName, setProjectName] = useState('');
 
     const fetchData = async () => {
         if (!projectId) return;
         setLoading(true);
         try {
-            // 先獲取專案名稱（選用）
-            // const projectSnap = await getDoc(doc(db, 'projects', projectId));
-            // if (projectSnap.exists()) {
-            //     setProjectName(projectSnap.data().name);
-            // }
-
             const q = query(collection(db, `projects/${projectId}/form_responses`));
             const snap = await getDocs(q);
-            const docs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // sort by _createdAt desc
+            const docs = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
             docs.sort((a, b) => {
                 const tA = a._createdAt?.seconds || 0;
                 const tB = b._createdAt?.seconds || 0;
@@ -65,33 +61,33 @@ const FormResponseViewer = () => {
 
     const handleExportCSV = () => {
         if (data.length === 0) return;
-        
+
         const allKeys = new Set();
-        data.forEach(item => {
-            Object.keys(item).forEach(key => {
+        data.forEach((item) => {
+            Object.keys(item).forEach((key) => {
                 if (!key.startsWith('_') && key !== 'id') {
                     allKeys.add(key);
                 }
             });
         });
-        
+
         const headers = ['建立時間', ...Array.from(allKeys).map(translateField)];
         const csvRows = [];
         csvRows.push(headers.join(','));
-        
-        data.forEach(item => {
+
+        data.forEach((item) => {
             const row = [];
             row.push(item._createdAt?.seconds ? `"${new Date(item._createdAt.seconds * 1000).toLocaleString()}"` : '"未知"');
-            Array.from(allKeys).forEach(key => {
+            Array.from(allKeys).forEach((key) => {
                 let val = item[key];
                 if (val === undefined || val === null) val = '';
-                let valStr = String(val).replace(/"/g, '""');
+                const valStr = String(val).replace(/"/g, '""');
                 row.push(`"${valStr}"`);
             });
             csvRows.push(row.join(','));
         });
-        
-        const csvString = "\uFEFF" + csvRows.join('\n');
+
+        const csvString = '\uFEFF' + csvRows.join('\n');
         const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -121,20 +117,22 @@ const FormResponseViewer = () => {
     const selectedItem = selectedIndex !== null ? data[selectedIndex] : null;
 
     return (
-        <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-            <div className="max-w-6xl mx-auto">
+        <div className="w-full min-h-screen bg-slate-50 p-4 md:p-8">
+            <div className="max-w-6xl mx-auto w-full">
                 <div className="mb-6 flex items-center gap-4">
-                    <button 
-                        onClick={() => navigate(-1)}
-                        className="p-2 hover:bg-white rounded-full transition text-slate-400 hover:text-emerald-500 shadow-sm border border-transparent hover:border-slate-200"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                    </button>
+                    {onBack && (
+                        <button
+                            onClick={onBack}
+                            className="p-2 hover:bg-white rounded-full transition text-slate-400 hover:text-emerald-500 shadow-sm border border-transparent hover:border-slate-200"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                            </svg>
+                        </button>
+                    )}
                     <div>
                         <h1 className="text-2xl font-bold text-slate-800">填寫資料瀏覽</h1>
-                        <p className="text-slate-500 text-sm">專案 ID: {projectId}</p>
+                        <p className="text-slate-500 text-sm">{projectName || `專案 ID: ${projectId}`}</p>
                     </div>
                 </div>
 
@@ -142,23 +140,33 @@ const FormResponseViewer = () => {
                     <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3 flex-wrap gap-2">
                         <h2 className="text-xl font-bold text-emerald-500">表單回覆列表</h2>
                         <div className="flex gap-2">
-                            <button onClick={handleExportCSV} disabled={loading || data.length === 0} className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50">
+                            <button
+                                onClick={handleExportCSV}
+                                disabled={loading || data.length === 0}
+                                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50"
+                            >
                                 📥 匯出 CSV
                             </button>
-                            <button onClick={fetchData} disabled={loading} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50">
+                            <button
+                                onClick={fetchData}
+                                disabled={loading}
+                                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-lg shadow-sm transition disabled:opacity-50"
+                            >
                                 🔄 重新整理
                             </button>
                         </div>
                     </div>
-                    
+
                     {loading ? (
                         <div className="text-center py-12 text-slate-500">
-                             <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                             載入中...
+                            <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                            載入中...
                         </div>
                     ) : data.length === 0 ? (
-                        <div className="text-center py-20 bg-slate-50 border border-slate-100 rounded-lg text-slate-400 text-sm italic">
-                            尚無使用者填寫的資料
+                        <div className="text-center py-16 md:py-20 bg-slate-50 border border-slate-200 rounded-xl">
+                            <div className="text-4xl mb-4 opacity-60">📋</div>
+                            <p className="text-slate-500 font-medium mb-1">尚無使用者填寫的資料</p>
+                            <p className="text-slate-400 text-sm">有人透過表單填寫後，資料會顯示於此</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto border border-slate-200 rounded-lg">
@@ -176,7 +184,11 @@ const FormResponseViewer = () => {
                                         const keys = Object.keys(cleanData);
                                         const previewKeys = keys.slice(0, 3);
                                         return (
-                                            <tr key={item.id} onClick={() => setSelectedIndex(idx)} className="hover:bg-emerald-50/50 cursor-pointer transition-colors group">
+                                            <tr
+                                                key={item.id}
+                                                onClick={() => setSelectedIndex(idx)}
+                                                className="hover:bg-emerald-50/50 cursor-pointer transition-colors group"
+                                            >
                                                 <td className="p-3 text-slate-500 font-mono text-xs whitespace-nowrap hidden md:table-cell align-top">
                                                     {item._createdAt?.seconds ? new Date(item._createdAt.seconds * 1000).toLocaleString() : '未知時間'}
                                                 </td>
@@ -185,9 +197,9 @@ const FormResponseViewer = () => {
                                                         <div className="text-xs text-slate-400 font-mono mb-1 md:hidden">
                                                             {item._createdAt?.seconds ? new Date(item._createdAt.seconds * 1000).toLocaleString() : '未知時間'}
                                                         </div>
-                                                        {previewKeys.map(k => (
+                                                        {previewKeys.map((k) => (
                                                             <div key={k} className="flex gap-2 text-sm overflow-hidden text-ellipsis">
-                                                                <span className="font-bold text-slate-600 shrink-0">{translateField(k)}:</span> 
+                                                                <span className="font-bold text-slate-600 shrink-0">{translateField(k)}:</span>
                                                                 <span className="text-slate-500 truncate">{String(cleanData[k])}</span>
                                                             </div>
                                                         ))}
@@ -197,7 +209,7 @@ const FormResponseViewer = () => {
                                                     </div>
                                                 </td>
                                                 <td className="p-3 text-right text-emerald-600 font-bold align-middle whitespace-nowrap">
-                                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity">查看詳情 &rarr;</span>
+                                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity">查看詳情 →</span>
                                                 </td>
                                             </tr>
                                         );
@@ -208,8 +220,14 @@ const FormResponseViewer = () => {
                     )}
 
                     {selectedItem && (
-                        <div className="fixed inset-0 bg-slate-900/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setSelectedIndex(null)}>
-                            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div
+                            className="fixed inset-0 bg-slate-900/40 z-[100] flex items-center justify-center p-4 backdrop-blur-sm"
+                            onClick={() => setSelectedIndex(null)}
+                        >
+                            <div
+                                className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+                                onClick={(e) => e.stopPropagation()}
+                            >
                                 <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50/80 backdrop-blur-md">
                                     <div>
                                         <h3 className="text-xl font-bold text-slate-800">表單詳細內容</h3>
@@ -218,14 +236,27 @@ const FormResponseViewer = () => {
                                         </div>
                                     </div>
                                     <div className="flex gap-2">
-                                        <button onClick={handlePrev} disabled={selectedIndex === 0} className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30">
-                                            &larr; 上一筆
+                                        <button
+                                            onClick={handlePrev}
+                                            disabled={selectedIndex === 0}
+                                            className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30"
+                                        >
+                                            ← 上一筆
                                         </button>
-                                        <button onClick={handleNext} disabled={selectedIndex === data.length - 1} className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30">
-                                            下一筆 &rarr;
+                                        <button
+                                            onClick={handleNext}
+                                            disabled={selectedIndex === data.length - 1}
+                                            className="h-8 px-3 flex items-center justify-center rounded bg-white border border-slate-200 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200 transition font-bold text-sm disabled:opacity-30"
+                                        >
+                                            下一筆 →
                                         </button>
                                         <div className="w-px h-8 bg-slate-200 mx-2"></div>
-                                        <button onClick={() => setSelectedIndex(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-red-500 transition font-bold text-xl leading-none">&times;</button>
+                                        <button
+                                            onClick={() => setSelectedIndex(null)}
+                                            className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-red-500 transition font-bold text-xl leading-none"
+                                        >
+                                            ×
+                                        </button>
                                     </div>
                                 </div>
 
@@ -234,18 +265,35 @@ const FormResponseViewer = () => {
                                         {Object.entries(selectedItem)
                                             .filter(([k]) => !k.startsWith('_') && k !== 'id')
                                             .map(([k, v]) => (
-                                                <div key={k} className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4 border-b border-slate-100 pb-4 last:border-0 last:pb-0 items-start">
+                                                <div
+                                                    key={k}
+                                                    className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4 border-b border-slate-100 pb-4 last:border-0 last:pb-0 items-start"
+                                                >
                                                     <div className="col-span-1 text-sm font-bold text-slate-500 uppercase tracking-wider pt-1 flex items-center md:justify-end md:text-right">
                                                         {translateField(k)}
                                                     </div>
                                                     <div className="col-span-1 md:col-span-2">
                                                         {typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://')) ? (
                                                             v.match(/\.(jpeg|jpg|gif|png|webp)$/i) ? (
-                                                                <a href={v} target="_blank" rel="noreferrer" className="block max-w-sm overflow-hidden rounded-lg border border-slate-200 mt-1 shadow-sm">
-                                                                    <img src={v} alt={translateField(k)} className="w-full h-auto object-cover hover:scale-105 transition-transform" />
+                                                                <a
+                                                                    href={v}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="block max-w-sm overflow-hidden rounded-lg border border-slate-200 mt-1 shadow-sm"
+                                                                >
+                                                                    <img
+                                                                        src={v}
+                                                                        alt={translateField(k)}
+                                                                        className="w-full h-auto object-cover hover:scale-105 transition-transform"
+                                                                    />
                                                                 </a>
                                                             ) : (
-                                                                <a href={v} target="_blank" rel="noreferrer" className="text-emerald-500 hover:text-emerald-600 font-medium hover:underline break-all text-sm inline-flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded">
+                                                                <a
+                                                                    href={v}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="text-emerald-500 hover:text-emerald-600 font-medium hover:underline break-all text-sm inline-flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded"
+                                                                >
                                                                     🔗 點擊開啟連結
                                                                 </a>
                                                             )
@@ -261,7 +309,10 @@ const FormResponseViewer = () => {
                                 </div>
 
                                 <div className="p-4 border-t border-slate-100 bg-slate-50 text-right">
-                                    <button onClick={() => setSelectedIndex(null)} className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg shadow-sm transition">
+                                    <button
+                                        onClick={() => setSelectedIndex(null)}
+                                        className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg shadow-sm transition"
+                                    >
                                         關閉
                                     </button>
                                 </div>

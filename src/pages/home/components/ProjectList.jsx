@@ -1,7 +1,7 @@
 import React from 'react';
 import ProjectCard from './ProjectCard';
 
-const ProjectList = ({ projects, onCreate, onEdit, onDelete, userProfile }) => (
+const ProjectList = ({ projects, onCreate, onEdit, onDelete, onViewFormResponses, userProfile }) => (
     <div className="w-full max-w-5xl space-y-6">
         <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-emerald-500">我的專案列表</h2>
@@ -18,7 +18,7 @@ const ProjectList = ({ projects, onCreate, onEdit, onDelete, userProfile }) => (
         ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {projects.map((p) => (
-                    <ProjectCard key={p.id} project={p} onEdit={onEdit} onDelete={onDelete} userProfile={userProfile} />
+                    <ProjectCard key={p.id} project={p} onEdit={onEdit} onDelete={onDelete} onViewFormResponses={onViewFormResponses} userProfile={userProfile} />
                 ))}
             </div>
         )}
