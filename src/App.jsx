@@ -3,12 +3,16 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import './App.css';
 
 // 使用 Lazy Loading
-const VibeAdmin = lazy(() => import('./pages/VibeAdmin'));
+const Home = lazy(() => import('./pages/home'));
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
-const VibeViewer = lazy(() => import('./pages/VibeViewer'));
-const AgentAdmin = lazy(() => import('./pages/AgentAdmin'));
+const SandboxViewer = lazy(() => import('./pages/SandboxViewer'));
+const AgentAdmin = lazy(() => import('./pages/agent'));
 
 const FormResponseViewer = lazy(() => import('./pages/FormResponseViewer'));
+
+// Vibe Coding 報名系統與後台（獨立於主站）
+const Signup = lazy(() => import('./pages/singup/Signup'));
+const SignupAdmin = lazy(() => import('./pages/singup/SignupAdmin'));
 
 function App() {
   return (
@@ -22,11 +26,13 @@ function App() {
         </div>
       }>
         <Routes>
-          <Route path="/" element={<VibeAdmin />} />
+          <Route path="/" element={<Home />} />
           <Route path="/admin" element={<SuperAdmin />} />
-          <Route path="/u/:userId/:projectId" element={<VibeViewer />} />
+          <Route path="/u/:userId/:projectId" element={<SandboxViewer />} />
           <Route path="/agents" element={<AgentAdmin />} />
           <Route path="/form-responses/:projectId" element={<FormResponseViewer />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/signup/admin" element={<SignupAdmin />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

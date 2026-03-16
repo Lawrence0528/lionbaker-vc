@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { db } from '../firebase'; // 假設 Firebase 設定檔匯出自 ../firebase
+import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
-const VibeViewer = () => {
+/** 專案沙盒預覽 - 於 iframe 中顯示專案 HTML 程式碼 */
+const SandboxViewer = () => {
     const { userId, projectId } = useParams();
     const [project, setProject] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -19,7 +20,6 @@ const VibeViewer = () => {
 
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    // 簡單驗證 userId 是否匹配 (如果需要嚴格權限控制，應在 Firestore Rules 設定)
                     if (data.userId && data.userId !== userId) {
                         console.warn('User ID mismatch, providing warning but displaying content anyway for demo');
                     }
@@ -45,17 +45,13 @@ const VibeViewer = () => {
     return (
         <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
             <iframe
-                title={`Vibe Project ${projectId}`}
+                title={`Sandbox Project ${projectId}`}
                 srcDoc={project.htmlCode}
                 style={{ width: '100%', height: '100%', border: 'none' }}
-                // 安全性關鍵設定：
-                // allow-scripts: 允許執行 JS
-                // allow-same-origin: 允許存取同源資源 (注意：若 srcDoc 內容有惡意腳本，這可能有風險，但在 srcDoc 模式下相對安全)
-                // 絕對不加: allow-modals (禁止彈窗), allow-top-navigation (禁止跳轉頂層)
                 sandbox="allow-scripts allow-same-origin"
             />
         </div>
     );
 };
 
-export default VibeViewer;
+export default SandboxViewer;

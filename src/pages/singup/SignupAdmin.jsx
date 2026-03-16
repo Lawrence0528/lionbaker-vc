@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { functions } from '../firebase';
+import { auth, functions, googleProvider } from '../../firebase';
+import { collection, query, orderBy, getDocs } from 'firebase/firestore'; // Keep getDocs for fallback/dev
 import { httpsCallable } from 'firebase/functions';
-import liff from '@line/liff';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
-// Placeholder LIFF ID - User needs to replace this
-const LIFF_ID = '2008963361-Dp4eie0r';
+const ADMIN_EMAIL = 'charge0528@gmail.com';
 
-const VibeCodingAdmin = () => {
-    const [lineParam, setLineParam] = useState(null);
+const SignupAdmin = () => {
+    const [adminEmail, setAdminEmail] = useState(null);
     const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations'
     const [sessions, setSessions] = useState([]);
     const [registrations, setRegistrations] = useState([]);
@@ -57,35 +57,40 @@ const VibeCodingAdmin = () => {
     });
 
     useEffect(() => {
-        const init = async () => {
-            try {
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    console.log('Skipping LIFF for local testing');
-                    setLineParam('Ue17ac074742b4f21da6f6b41307a246a');
-                    fetchSessions('Ue17ac074742b4f21da6f6b41307a246a');
-                } else if (LIFF_ID && LIFF_ID !== 'MY_LIFF_ID') {
-                    await Promise.race([
-                        liff.init({ liffId: LIFF_ID }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
-                    ]);
-                    if (liff.isLoggedIn()) {
-                        const profile = await liff.getProfile();
-                        setLineParam(profile.userId);
-                        fetchSessions(profile.userId);
-                    } else {
-                        liff.login();
-                    }
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user) {
+                if (user.email === ADMIN_EMAIL) {
+                    setAdminEmail(user.email);
+                    fetchSessions(user.email);
                 } else {
+                    signOut(auth);
+                    setError('存取被拒：非管理員帳號。');
+                    setAdminEmail(null);
                     setLoading(false);
                 }
-            } catch (err) {
-                console.error(err);
-                setError('初始化失敗');
+            } else {
+                setAdminEmail(null);
                 setLoading(false);
             }
-        };
-        init();
+        });
+        return () => unsubscribe();
     }, []);
+
+    const handleLogin = async () => {
+        try {
+            setLoading(true);
+            setError('');
+            await signInWithPopup(auth, googleProvider);
+        } catch (err) {
+            console.error(err);
+            setError('登入失敗或已取消');
+            setLoading(false);
+        }
+    };
+
+    const handleLogout = async () => {
+        await signOut(auth);
+    };
 
     const fetchSessions = async (userId) => {
         setLoading(true);
@@ -111,7 +116,7 @@ const VibeCodingAdmin = () => {
         setViewMode('registrations');
         try {
             const getRegFn = httpsCallable(functions, 'getVibeRegistrations');
-            const result = await getRegFn({ userId: lineParam, sessionId: session.id });
+            const result = await getRegFn({  sessionId: session.id });
             const regs = result.data.registrations || [];
             setRegistrations(regs);
 
@@ -126,7 +131,7 @@ const VibeCodingAdmin = () => {
 
                 // Do not await to avoid blocking UI, run in background
                 updateFn({
-                    userId: lineParam,
+                    
                     sessionId: session.id,
                     updates: { currentCount: realActiveCount }
                 }).catch(err => console.error("Auto-sync failed:", err));
@@ -155,13 +160,13 @@ const VibeCodingAdmin = () => {
 
             const createFn = httpsCallable(functions, 'createVibeSession');
             await createFn({
-                userId: lineParam,
+                
                 ...newSession,
                 date: isoDate
             });
 
             setIsCreateSessionOpen(false);
-            fetchSessions(lineParam);
+            fetchSessions(adminEmail);
             alert('場次建立成功');
         } catch (err) {
             alert('建立失敗: ' + err.message);
@@ -195,7 +200,7 @@ const VibeCodingAdmin = () => {
 
             const updateFn = httpsCallable(functions, 'updateVibeSession');
             await updateFn({
-                userId: lineParam,
+                
                 sessionId: sessionToEdit.id,
                 updates: {
                     ...editSessionForm,
@@ -207,7 +212,7 @@ const VibeCodingAdmin = () => {
             });
 
             setIsEditSessionOpen(false);
-            fetchSessions(lineParam); // Refresh to show new data
+            fetchSessions(adminEmail); // Refresh to show new data
             alert('場次更新成功');
         } catch (err) {
             alert('更新失敗: ' + err.message);
@@ -235,7 +240,7 @@ const VibeCodingAdmin = () => {
         try {
             const updateFn = httpsCallable(functions, 'updateVibeRegistration');
             await updateFn({
-                userId: lineParam,
+                
                 registrationId: editTarget.id,
                 updates: {
                     ...editForm,
@@ -259,7 +264,7 @@ const VibeCodingAdmin = () => {
         setOpLoading(true);
         try {
             const deleteFn = httpsCallable(functions, 'deleteVibeRegistration');
-            await deleteFn({ userId: lineParam, registrationId: regId });
+            await deleteFn({  registrationId: regId });
 
             setRegistrations(prev => prev.filter(r => r.id !== regId));
         } catch (err) {
@@ -275,7 +280,7 @@ const VibeCodingAdmin = () => {
         try {
             const updateFn = httpsCallable(functions, 'updateVibeRegistration');
             await updateFn({
-                userId: lineParam,
+                
                 registrationId: reg.id,
                 updates: { status: 'cancelled' }
             });
@@ -341,7 +346,12 @@ const VibeCodingAdmin = () => {
                             )}
                             Vibe Coding {viewMode === 'sessions' ? '場次管理' : '報名名單管理'}
                         </h1>
-                        <p className="text-slate-500 text-sm mt-1">Admin ID: <span className="font-mono bg-slate-200 px-2 py-0.5 rounded text-slate-700">{lineParam || '...'}</span></p>
+                        {adminEmail && (
+                            <p className="text-slate-500 text-sm mt-1 flex items-center gap-2">
+                                Admin: <span className="font-mono bg-slate-200 px-2 py-0.5 rounded text-slate-700">{adminEmail}</span>
+                                <button onClick={handleLogout} className="text-blue-500 hover:underline text-xs">登出</button>
+                            </p>
+                        )}
                     </div>
                     {viewMode === 'sessions' && (
                         <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition-colors flex items-center gap-2">
@@ -355,6 +365,17 @@ const VibeCodingAdmin = () => {
 
                 {loading ? (
                     <div className="flex justify-center py-20"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>
+                ) : !adminEmail ? (
+                    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl shadow-sm border border-slate-200 mt-10">
+                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                        </div>
+                        <h2 className="text-xl font-bold text-slate-800 mb-2">需要管理員權限</h2>
+                        <p className="text-slate-500 mb-6 font-mono text-sm max-w-sm text-center">請使用授權的管理員 Google 帳號登入系統管理後台。</p>
+                        <button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl shadow-md transition-colors font-bold flex items-center gap-2">
+                            使用 Google 登入
+                        </button>
+                    </div>
                 ) : (
                     <>
                         {/* VIEW MODE: SESSIONS */}
@@ -649,4 +670,4 @@ const VibeCodingAdmin = () => {
     );
 };
 
-export default VibeCodingAdmin;
+export default SignupAdmin;

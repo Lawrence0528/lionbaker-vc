@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import SEO from '../components/SEO';
-import MatrixRain from '../components/MatrixRain';
-import { db, functions } from '../firebase';
+import SEO from '../../components/SEO';
+import MatrixRain from '../../components/MatrixRain';
+import { db, functions } from '../../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import liff from '@line/liff';
@@ -10,7 +10,8 @@ import liff from '@line/liff';
 const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka'; // e.g., @123xxxxx (Must include @ if using R/oaMessage/ID, usually needs @)
 
-const VibeCoding = () => {
+/** Vibe Coding 報名系統 - 學員填寫報名表單 */
+const Signup = () => {
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState('');
@@ -32,7 +33,7 @@ const VibeCoding = () => {
     });
 
     // UI State for Source Selection
-    const [sourceOption, setSourceOption] = useState(''); // '嘉吉老師', '偉志老師', 'Other'
+    const [sourceOption, setSourceOption] = useState(''); // '嘉吉老師', 'Rich老師', 'Other'
     const [customSource, setCustomSource] = useState('');
 
     useEffect(() => {
@@ -48,17 +49,8 @@ const VibeCoding = () => {
         const init = async () => {
             try {
                 // 1. Init LIFF
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    console.log('Skipping LIFF for local testing');
-                    setIsLiffLoggedIn(true);
-                    const mockProfile = { userId: 'tester1', displayName: 'Local Tester' };
-                    setLineProfile(mockProfile);
-                    setFormData(prev => ({ ...prev, name: mockProfile.displayName }));
-                } else if (LIFF_ID && LIFF_ID !== 'MY_LIFF_ID') {
-                    await Promise.race([
-                        liff.init({ liffId: LIFF_ID }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('LIFF_TIMEOUT')), 5000))
-                    ]);
+                if (LIFF_ID && LIFF_ID !== 'MY_LIFF_ID') {
+                    await liff.init({ liffId: LIFF_ID });
                     if (liff.isLoggedIn()) {
                         setIsLiffLoggedIn(true);
                         const profile = await liff.getProfile();
@@ -244,8 +236,8 @@ const VibeCoding = () => {
     return (
         <div className="min-h-screen bg-black text-slate-200 font-sans antialiased overflow-x-hidden relative">
             <SEO
-                title="Vibe Coding 超屏新技能 | 實戰工作坊"
-                description="掌握 AI 提示詞工程，0 基礎也能寫程式。NFC 標籤應用，開發程式更是開啟你的業績。"
+                title="Vibe Coding 自動化吸客機器 | 實戰工作坊"
+                description="2026年，還在用嘴拓客？用AI做你的專屬程式設計師，打造自動化吸客機器。零基礎可學，實戰帶走專屬Web App與NFC科技名片！"
                 image="https://lionbaker.web.app/vibe/poster.jpg"
                 url="https://lionbaker.web.app/vibe"
                 type="website"
@@ -261,16 +253,19 @@ const VibeCoding = () => {
                 {/* Header */}
                 <div className="text-center mb-10">
                     <span className="inline-block px-3 py-1 rounded-full bg-green-900/40 border border-green-500/30 text-green-400 text-xs font-bold tracking-widest mb-4 font-mono">
-                        // AI_APPLICATION_WORKSHOP
+                        // 2026_AI_AUTOMATION
                     </span>
                     <h1 className="text-4xl md:text-5xl font-black text-white mb-4 leading-tight tracking-tighter">
-                        Vibe Coding<br />
-                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">超屏新技能</span>
+                        2026年，還在用嘴拓客？<br />
+                        <span className="text-3xl md:text-4xl text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">AI已經幫你的同行多賺30%了！</span>
                     </h1>
-                    <p className="text-slate-400 text-lg font-mono text-sm md:text-base">
-                        &lt;System&gt; 別再用「勞力」對抗「趨勢」 &lt;/System&gt;<br />
-                        你準備好掌握不被 AI 淘汰的硬實力了嗎？
+                    <p className="text-slate-400 text-lg font-mono text-sm md:text-base mb-2">
+                        &lt;System&gt; 用AI做你的專屬程式設計師 &lt;/System&gt;<br />
+                        打造自動化吸客機器，讓你成為行業裡少數會用科技賺錢的人
                     </p>
+                    <div className="inline-block bg-yellow-500/20 text-yellow-400 font-bold px-4 py-2 rounded-lg border border-yellow-500/30 text-sm mt-2">
+                        🔥 限時優惠：前10名報名，再送一對一AI拓客方案諮詢 (價值2,000元)
+                    </div>
                 </div>
 
 
@@ -278,33 +273,33 @@ const VibeCoding = () => {
                 <div className="mb-12 space-y-8">
                     <div className="bg-black/60 border border-green-900/50 rounded-2xl p-6 md:p-8 backdrop-blur-sm shadow-[0_0_30px_rgba(0,0,0,0.5)]">
                         <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2 font-mono">
-                            <span className="text-green-500">_Target:</span> 核心課程
+                            <span className="text-green-500">_Core Value:</span> 課程核心價值
                         </h2>
                         <div className="space-y-6">
                             <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">01</div>
+                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">🎯</div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">零基礎也能打造 AI 應用</h3>
+                                    <h3 className="text-lg font-bold text-white mb-1">Line@自動化篩客</h3>
                                     <p className="text-slate-400 leading-relaxed text-sm">
-                                        別被程式碼嚇到了！我們教你用「自然語言」指揮 AI，這不是教你當工程師，而是教你當超級產品經理。
+                                        不用再大海撈針，AI幫你精準識別高意向客戶，把時間留給成交。
                                     </p>
                                 </div>
                             </div>
                             <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">02</div>
+                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">🚀</div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">NFC 實體與數位的橋樑</h3>
+                                    <h3 className="text-lg font-bold text-white mb-1">零程式碼打造 Web App</h3>
                                     <p className="text-slate-400 leading-relaxed text-sm">
-                                        學習如何將名片、海報變成「一觸即發」的數位入口。讓客戶的手機成為你的業績提款機。
+                                        零基礎可學！不用寫程式，只要會說話，AI就幫你做出專屬吸客工具。免買主機，獨家雲端平台一鍵發布，直接省下高昂成本。
                                     </p>
                                 </div>
                             </div>
                             <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">03</div>
+                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">💡</div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">現場實戰，即學即用</h3>
+                                    <h3 className="text-lg font-bold text-white mb-1">實戰帶走：科技賦能</h3>
                                     <p className="text-slate-400 leading-relaxed text-sm">
-                                        拒絕紙上談兵！工作坊結束時，你將擁有一個屬於自己的 Web App 作品，直接帶回家應用在業務上。
+                                        課後直接擁有「專屬 Web App」與「NFC科技名片」。加碼再送：免費製作個人Line貼圖，大幅提升品牌曝光，2026年絕不被淘汰！
                                     </p>
                                 </div>
                             </div>
@@ -327,27 +322,27 @@ const VibeCoding = () => {
                                     />
                                 </div>
                                 <h3 className="text-2xl font-bold text-white mb-1 mt-2">陳嘉吉</h3>
-                                <p className="text-green-400 text-sm mb-4 font-mono">20年資深工程師 <br /> 系統架構師<br />專業烘焙老師<br />飲控健康顧問</p>
+                                <p className="text-green-400 text-sm mb-4 font-mono">幫100+業務團隊搭建AI拓客系統<br />20年資深架構師</p>
                                 <div className="w-8 h-1 bg-green-500/50 mx-auto mb-4 rounded-full"></div>
                                 <p className="text-slate-300 text-sm leading-relaxed text-justify">
-                                    20年工程師邏輯腦 X 11萬烘焙粉絲名師。他是最懂如何靈活運用科技解決痛點的實戰派。不只給妳方向，更給妳武器！教妳用自然語言紀錄蛻變，將內在成長轉化為展現自信的最強影響力。
+                                    20年工程師邏輯腦。他是最懂如何靈活運用科技解決痛點的實戰派。不只給你方向，更給你武器！教你用自然語言指揮AI，打造自動化吸客機器。
                                 </p>
                             </div>
 
-                            {/* Lecturer 2 - Weizhi */}
+                            {/* Lecturer 2 - Rich */}
                             <div className="relative mt-8 pt-12 pb-8 px-6 bg-black/40 rounded-2xl border border-green-500/30 text-center shadow-[0_0_15px_rgba(34,197,94,0.1)] backdrop-blur-md">
                                 <div className="absolute -top-12 left-1/2 -translate-x-1/2 p-0.5 rounded-full bg-gradient-to-b from-cyan-400 to-cyan-900 shadow-[0_0_20px_rgba(34,211,238,0.6)]">
                                     <img
                                         src="https://lionbaker.web.app/vibe/AI2.png"
-                                        alt="鄭偉志"
+                                        alt="Rich"
                                         className="w-24 h-24 rounded-full border-4 border-black object-cover bg-black"
                                     />
                                 </div>
-                                <h3 className="text-2xl font-bold text-white mb-1 mt-2">鄭偉志</h3>
-                                <p className="text-cyan-400 text-sm mb-4 font-mono">千部影片御用剪輯手<br /><br />財商系統講師<br /><br /></p>
+                                <h3 className="text-2xl font-bold text-white mb-1 mt-2">Rich</h3>
+                                <p className="text-cyan-400 text-sm mb-4 font-mono">用AI幫客戶業績翻倍<br />財商系統講師</p>
                                 <div className="w-8 h-1 bg-cyan-500/50 mx-auto mb-4 rounded-full"></div>
                                 <p className="text-slate-300 text-sm leading-relaxed text-justify">
-                                    3年剪輯經驗.15年業務行銷經驗 。他能用最簡單的方式，讓你理解複雜的商業邏輯。不只教妳剪輯，更教妳如何用數位工具打造無限商機。
+                                    具備豐富業務與財商教學經驗。他能用最簡單的方式，讓你理解複雜的商業邏輯與科技變現。教你駕馭AI，成為少數會用新科技大把賺錢的人。
                                 </p>
                             </div>
                         </div>
@@ -479,10 +474,10 @@ const VibeCoding = () => {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setSourceOption('偉志老師')}
-                                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${sourceOption === '偉志老師' ? 'bg-cyan-600 border-cyan-500 text-black shadow-[0_0_15px_rgba(8,145,178,0.4)]' : 'bg-black/50 border-slate-700 text-slate-400 hover:border-cyan-500/50'}`}
+                                        onClick={() => setSourceOption('Rich老師')}
+                                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${sourceOption === 'Rich老師' ? 'bg-cyan-600 border-cyan-500 text-black shadow-[0_0_15px_rgba(8,145,178,0.4)]' : 'bg-black/50 border-slate-700 text-slate-400 hover:border-cyan-500/50'}`}
                                     >
-                                        偉志老師
+                                        Rich老師
                                     </button>
                                 </div>
                                 <button
@@ -592,4 +587,4 @@ const VibeCoding = () => {
     );
 };
 
-export default VibeCoding;
+export default Signup;

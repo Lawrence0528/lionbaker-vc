@@ -69,4 +69,4 @@ export const logOut = async () => {
     }
 };
 
-export { auth, db, storage, functions };
+export { auth, db, storage, functions, googleProvider };
