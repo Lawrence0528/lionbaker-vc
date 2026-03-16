@@ -27,6 +27,7 @@ import ProjectList from './components/ProjectList';
 import ProjectEditor from './components/ProjectEditor';
 import UserSettings from './components/UserSettings';
 import AgentAdmin from '../agent';
+import SuperAdmin from '../super-admin';
 
 let liffInitPromise = null;
 
@@ -334,8 +335,10 @@ const Home = () => {
     if (isExpired && viewMode !== 'list') return <ActivationScreen user={userProfile} onRedeem={handleRedeemCode} mode="expire" />;
 
     return (
-        <div className="min-h-screen font-sans flex flex-col items-center p-4 transition-all duration-700 ease-in-out text-slate-700">
-            <h1 className="text-3xl font-bold mb-6 mt-4 text-emerald-500 drop-shadow-sm">靈感烘焙機 V1</h1>
+        <div className="min-h-screen font-sans flex flex-col items-center px-2 py-3 transition-all duration-700 ease-in-out text-slate-700">
+            <div className="flex flex-col sm:flex-row items-center gap-3 mb-6 mt-4">
+                <h1 className="text-3xl font-bold text-emerald-500 drop-shadow-sm">靈感烘焙機 V1</h1>
+            </div>
 
             {!userProfile ? (
                 initError ? (
@@ -382,26 +385,37 @@ const Home = () => {
                             </button>
                         </div>
                     </div>
-                    <div className="w-full max-w-5xl mb-8">
-                        <div className="flex bg-white/50 backdrop-blur-sm p-1.5 rounded-2xl border border-slate-200/60 shadow-sm w-fit mx-auto sm:mx-0">
+                    <div className="w-full max-w-5xl mb-8 px-2">
+                        <div className={`grid ${userProfile?.role === 'SuperAdmin' ? 'grid-cols-3' : 'grid-cols-2'} items-center gap-2 bg-white/50 backdrop-blur-sm p-2 rounded-2xl border border-slate-200/60 shadow-sm`}>
                             <button
                                 onClick={() => setActiveTab('projects')}
-                                className={`px-8 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 flex items-center gap-2 ${
+                                className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
                                     activeTab === 'projects' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
                                 }`}
                             >
-                                <span className="text-base">📁</span>
-                                專案列表
+                                <span className="text-base shrink-0" aria-hidden>📁</span>
+                                <span className="truncate">專案列表</span>
                             </button>
                             <button
                                 onClick={() => setActiveTab('line-bot')}
-                                className={`px-8 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 flex items-center gap-2 ${
+                                className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
                                     activeTab === 'line-bot' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
                                 }`}
                             >
-                                <span className="text-base">🤖</span>
-                                LINE 機器人管家
+                                <span className="text-base shrink-0" aria-hidden>🤖</span>
+                                <span className="truncate">LINE BOT</span>
                             </button>
+                            {userProfile?.role === 'SuperAdmin' && (
+                                <button
+                                    onClick={() => setActiveTab('admin')}
+                                    className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
+                                        activeTab === 'admin' ? 'bg-red-500 text-white shadow-lg shadow-red-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
+                                    }`}
+                                >
+                                    <span className="text-base shrink-0" aria-hidden>🛡️</span>
+                                    <span className="truncate">後台</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                     {activeTab === 'projects' ? (
@@ -435,6 +449,10 @@ const Home = () => {
                                 userProfile={userProfile}
                             />
                         </>
+                    ) : activeTab === 'admin' ? (
+                        <div className="w-full">
+                            <SuperAdmin />
+                        </div>
                     ) : (
                         <div className="w-full max-w-5xl">
                             <AgentAdmin />

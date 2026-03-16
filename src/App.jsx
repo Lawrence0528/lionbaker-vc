@@ -4,7 +4,7 @@ import './App.css';
 
 // 使用 Lazy Loading
 const Home = lazy(() => import('./pages/home'));
-const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+const SuperAdmin = lazy(() => import('./pages/super-admin'));
 const SandboxViewer = lazy(() => import('./pages/SandboxViewer'));
 const AgentAdmin = lazy(() => import('./pages/agent'));
 
