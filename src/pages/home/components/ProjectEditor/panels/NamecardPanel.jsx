@@ -45,6 +45,7 @@ const NamecardPanel = ({ cardData, onChange, templateKey, onTemplateChange, uplo
                 <option value="wellness">🧬 健康教練</option>
                 <option value="wellnessSpirit">🌿 身心靈</option>
                 <option value="tarotAstrology">🔮 占星/塔羅</option>
+                <option value="eyelashBeauty">✨ 美睫店/材料行</option>
             </FormSelect>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormInput label="姓名" name="personName" value={cardData.personName} onChange={handleCardChange} />

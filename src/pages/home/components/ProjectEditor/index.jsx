@@ -9,10 +9,25 @@ import {
     PREMIUM_COLORS,
     DESIGN_STYLES,
     DEFAULT_AVATARS,
+    INDUSTRY_TEMPLATES,
     INTERACTIVE_TEMPLATES,
     LANDING_PAGE_TEMPLATES,
     PROJECT_TYPES,
 } from '../../constants';
+
+/** 當 project.templateKey 未儲存時，從 cardData 推斷電子名片的模版 key（支援舊專案） */
+const inferNamecardTemplateKey = (proj) => {
+    if (proj.type !== 'namecard') return proj.templateKey || 'insurance';
+    if (proj.templateKey && INDUSTRY_TEMPLATES[proj.templateKey]) return proj.templateKey;
+    const txt = (proj.title || '') + (proj.services || '') + (proj.honor || '') + (proj.introContent || '');
+    if (/美睫|材料行/.test(txt)) return 'eyelashBeauty';
+    if (/房仲|不動產/.test(txt)) return 'realEstate';
+    if (/團購|微商/.test(txt)) return 'groupBuy';
+    if (/身心靈|療癒/.test(txt)) return 'wellnessSpirit';
+    if (/占星|塔羅/.test(txt)) return 'tarotAstrology';
+    if (/健康|體態|代謝/.test(txt)) return 'wellness';
+    return 'insurance';
+};
 import { FormInput, FormTextarea, FormSelect } from '../FormFields';
 import {
     NamecardPanel,
@@ -27,7 +42,7 @@ import {
 const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
     // Basic State
     const [projectType, setProjectType] = useState(project.type || 'namecard');
-    const [templateKey, setTemplateKey] = useState('insurance');
+    const [templateKey, setTemplateKey] = useState(() => inferNamecardTemplateKey(project));
     const [statusMsg, setStatusMsg] = useState('');
     const fileInputRef = useRef(null);
     const avatarFileInputRef = useRef(null);
@@ -362,7 +377,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
                 userAlias: commonData.userAlias || '',
                 projectAlias: commonData.projectAlias || '',
             };
-            if (projectType === 'namecard') Object.assign(docData, cardData);
+            if (projectType === 'namecard') Object.assign(docData, cardData, { templateKey });
             else if (projectType === 'game') Object.assign(docData, gameData);
             else if (projectType === 'interactive_tool') Object.assign(docData, interactiveData);
             else if (projectType === 'landingPage') Object.assign(docData, landingPageData);
