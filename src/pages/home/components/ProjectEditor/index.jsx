@@ -142,6 +142,9 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
     const [ogData, setOgData] = useState({ title: '', description: '', image: '' });
     const isUpdatingRef = useRef(false);
 
+    // htmlCode 歷史版本選擇
+    const [selectedHistoryKey, setSelectedHistoryKey] = useState('');
+
     const currentAccentHex = PREMIUM_COLORS.find((c) => c.value === commonData.mainColor)?.hex || '#00ffff';
 
     // Init SEO preview
@@ -382,6 +385,16 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             else if (projectType === 'interactive_tool') Object.assign(docData, interactiveData);
             else if (projectType === 'landingPage') Object.assign(docData, landingPageData);
             else if (projectType === 'form') Object.assign(docData, formData);
+
+            // htmlCode 歷程紀錄：若本次內容與原始專案不同且不為空，則追加一筆歷程
+            if (project.htmlCode !== commonData.htmlCode && commonData.htmlCode?.trim()) {
+                const prevHistory = project.htmlHistory || {};
+                const timestampKey = new Date().toISOString();
+                docData.htmlHistory = {
+                    ...prevHistory,
+                    [timestampKey]: commonData.htmlCode,
+                };
+            }
 
             await updateDoc(doc(db, 'projects', project.id), docData);
 
@@ -758,7 +771,100 @@ ${baseInfo}
 
                 <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 flex flex-col gap-6">
                     <h2 className="text-xl font-bold text-emerald-500">5. 程式碼</h2>
-                    <textarea className="w-full h-64 rounded-xl p-4 font-mono text-xs bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none resize-none" placeholder="請貼上 Gemini 產生的 <html>...</html>" value={commonData.htmlCode} onChange={(e) => setCommonData((prev) => ({ ...prev, htmlCode: e.target.value }))}></textarea>
+
+                    {Object.keys(project.htmlHistory || {}).length > 1 && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col gap-2">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-bold text-emerald-600">歷史版本記錄</span>
+                                {selectedHistoryKey && (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const history = project.htmlHistory || {};
+                                                const nextHtml = history[selectedHistoryKey];
+                                                if (!nextHtml) return;
+                                                const win = window.open('', '_blank');
+                                                if (!win) {
+                                                    alert('無法開啟新視窗，請確認瀏覽器是否阻擋了彈出視窗。');
+                                                    return;
+                                                }
+                                                win.document.open();
+                                                win.document.write(nextHtml);
+                                                win.document.close();
+                                            }}
+                                            className="px-3 py-1 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900 transition"
+                                        >
+                                            預覽此版本
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const history = project.htmlHistory || {};
+                                                const nextHtml = history[selectedHistoryKey];
+                                                if (!nextHtml) return;
+                                                if (
+                                                    !window.confirm(
+                                                        '確定要套用這個歷史版本的程式碼嗎？目前尚未儲存的變更將被覆蓋，需再按一次「儲存專案」才會生效。'
+                                                    )
+                                                )
+                                                    return;
+                                                setCommonData((prev) => ({ ...prev, htmlCode: nextHtml }));
+                                            }}
+                                            className="px-3 py-1 rounded-lg bg-emerald-500 text-white text-xs hover:bg-emerald-600 transition"
+                                        >
+                                            套用此版本
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            <select
+                                className="w-full rounded-lg border border-slate-300 bg-white text-xs p-2 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none"
+                                value={selectedHistoryKey}
+                                onChange={(e) => setSelectedHistoryKey(e.target.value)}
+                            >
+                                <option value="">請選擇要還原的版本</option>
+                                {Object.entries(project.htmlHistory || {})
+                                    .sort(([a], [b]) => (a < b ? 1 : -1)) // 新的在前面
+                                    .map(([ts], idx, arr) => {
+                                        let label = ts;
+                                        try {
+                                            const d = new Date(ts);
+                                            if (!Number.isNaN(d.getTime())) {
+                                                label = d.toLocaleString('zh-TW', {
+                                                    year: 'numeric',
+                                                    month: '2-digit',
+                                                    day: '2-digit',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit',
+                                                    second: '2-digit',
+                                                    hour12: false,
+                                                });
+                                            }
+                                        } catch (e) {
+                                            // ignore parse error, fallback to raw ts
+                                        }
+                                        const versionNo = arr.length - idx;
+                                        return (
+                                            <option key={ts} value={ts}>
+                                                版本 {versionNo} - {label}
+                                            </option>
+                                        );
+                                    })}
+                            </select>
+                            <p className="text-[10px] text-slate-400">
+                                選擇版本並點「套用此版本」後，下方程式碼會被覆蓋，請再按一次「儲存專案」才會真正寫入資料庫。
+                            </p>
+                        </div>
+                    )}
+
+                    <textarea
+                        className="w-full h-64 rounded-xl p-4 font-mono text-xs bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none resize-none"
+                        placeholder="請貼上 Gemini 產生的 <html>...</html>"
+                        value={commonData.htmlCode}
+                        onChange={(e) => setCommonData((prev) => ({ ...prev, htmlCode: e.target.value }))}
+                        onFocus={(e) => e.target.select()}
+                    ></textarea>
 
                     {commonData.htmlCode && (
                         <div className="bg-[#00000060] border border-[#ffffff10] rounded-xl p-6 flex flex-col gap-6 animate-fade-in-up backdrop-blur-sm">
