@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import SEO from '../../components/SEO';
-import MatrixRain from '../../components/MatrixRain';
 import { db, functions } from '../../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -10,21 +9,25 @@ import liff from '@line/liff';
 const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka'; // e.g., @123xxxxx (Must include @ if using R/oaMessage/ID, usually needs @)
 
-/** Vibe Coding 報名系統 - 學員填寫報名表單 */
+/** AI落地師培訓班 報名系統 - 學員填寫報名表單 */
 const Signup = () => {
+    const videoRef = useRef(null);
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState('');
     const [isLiffLoggedIn, setIsLiffLoggedIn] = useState(false);
     const [lineProfile, setLineProfile] = useState(null);
+    const [isVideoMuted, setIsVideoMuted] = useState(true);
 
     // Sessions State
     const [sessions, setSessions] = useState([]);
     const [selectedSessionId, setSelectedSessionId] = useState(null);
     const [sessionsLoading, setSessionsLoading] = useState(true);
+    const [sessionsError, setSessionsError] = useState('');
 
     const [formData, setFormData] = useState({
         name: '',
+        email: '',
         phone: '',
         source: '',
         lastFive: '',
@@ -36,6 +39,10 @@ const Signup = () => {
     const [sourceOption, setSourceOption] = useState(''); // '嘉吉老師', 'Rich老師', 'Other'
     const [customSource, setCustomSource] = useState('');
 
+    const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
+    const seoImage = `${siteOrigin}/signup.png`;
+    const seoUrl = `${siteOrigin}/vibe`;
+
     useEffect(() => {
         if (sourceOption === 'Other') {
             setFormData(prev => ({ ...prev, source: customSource }));
@@ -43,6 +50,20 @@ const Signup = () => {
             setFormData(prev => ({ ...prev, source: sourceOption }));
         }
     }, [sourceOption, customSource]);
+
+    const handleUnmuteVideo = async () => {
+        const el = videoRef.current;
+        if (!el) return;
+        try {
+            el.muted = false;
+            el.volume = Math.max(el.volume || 0, 0.8);
+            setIsVideoMuted(false);
+            // 有些瀏覽器需要使用者互動後才允許播放帶聲音的媒體
+            await el.play().catch(() => {});
+        } catch {
+            // ignore
+        }
+    };
 
     // Initialize LIFF and Fetch Sessions
     useEffect(() => {
@@ -72,6 +93,7 @@ const Signup = () => {
         const fetchSessions = async () => {
             try {
                 setSessionsLoading(true);
+                setSessionsError('');
                 const getSessionsFn = httpsCallable(functions, 'getVibeSessions');
                 const result = await getSessionsFn();
                 const fetchedSessions = result.data.sessions || [];
@@ -108,14 +130,29 @@ const Signup = () => {
                             price: 1980,
                             originalPrice: 5000,
                             status: 'open',
-                            title: 'Vibe Coding 基礎實戰班 (預設)'
+                            title: 'AI落地師培訓班 (預設)'
                         }
                     ]);
                     setSelectedSessionId('default_01');
                 }
             } catch (err) {
                 console.error("Failed to fetch sessions:", err);
-                // Keep mock/empty or handle error
+                // 防呆：雲端函式/索引/網路異常時，至少提供一個可報名的預設場次，避免表單變空白
+                setSessionsError('目前無法載入最新場次（可能是網路或系統忙碌）。已先載入預設場次，您仍可完成報名。');
+                setSessions([
+                    {
+                        id: 'default_01',
+                        date: '2026-02-08T13:00:00',
+                        displayDate: '2026/02/08 (日) 13:00',
+                        location: 'TOP SPACE 商務中心',
+                        address: '臺中市中區民族路23號3樓',
+                        price: 1980,
+                        originalPrice: 5000,
+                        status: 'open',
+                        title: 'AI落地師培訓班（預設）'
+                    }
+                ]);
+                setSelectedSessionId('default_01');
             } finally {
                 setSessionsLoading(false);
             }
@@ -136,6 +173,10 @@ const Signup = () => {
         e.preventDefault();
         setError('');
 
+        if (!selectedSessionId) {
+            setError('請先選擇場次');
+            return;
+        }
         if (!formData.source) {
             setError('請填寫來源資訊');
             return;
@@ -149,11 +190,13 @@ const Signup = () => {
 
         try {
             const selectedSession = sessions.find(s => s.id === selectedSessionId);
-            const sessionInfo = selectedSession ? {
-                sessionId: selectedSession.id,
-                sessionDate: selectedSession.date, // or displayDate
-                sessionLocation: selectedSession.location
-            } : {};
+            // 重要：無論 selectedSession 是否存在，都要寫入 sessionId，避免後台用 where(sessionId==...) 查不到
+            const sessionInfo = {
+                sessionId: selectedSessionId,
+                sessionTitle: selectedSession?.title || null,
+                sessionDate: selectedSession?.date || null, // ISO 字串（由場次資料決定）
+                sessionLocation: selectedSession?.location || null,
+            };
 
             await addDoc(collection(db, 'registrations_vibe'), {
                 ...formData,
@@ -189,38 +232,46 @@ const Signup = () => {
 
     if (success) {
         return (
-            <div className="min-h-screen bg-black text-slate-200 font-sans flex items-center justify-center p-4 relative overflow-hidden">
-                <MatrixRain />
-                <div className="relative z-10 text-center py-8 bg-black/80 backdrop-blur-xl border border-green-500/30 rounded-3xl p-10 shadow-[0_0_50px_rgba(34,197,94,0.2)] max-w-md w-full">
-                    <div className="inline-flex items-center justify-center w-20 h-20 bg-green-500/20 text-green-400 rounded-full mb-6 border border-green-500/50">
+            <main className="min-h-screen bg-slate-50 text-slate-900 font-sans flex items-center justify-center p-4">
+                <section className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 p-6 text-center">
+                    <div className="mx-auto inline-flex items-center justify-center w-16 h-16 bg-sky-50 text-sky-700 rounded-full mb-5 border border-sky-100">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                         </svg>
                     </div>
-                    <h3 className="text-2xl font-bold text-white mb-2">報名成功！</h3>
-                    <p className="text-slate-300 mb-6">
+                    <h1 className="text-2xl font-bold text-slate-900 mb-2">報名成功</h1>
+                    <p className="text-slate-600 mb-6 leading-relaxed">
                         我們已收到您的資訊。<br />
-                        {isLiffLoggedIn && liff.isInClient() && <span className="text-sm text-green-300">(確認訊息已發送至聊天室)</span>}
+                        {isLiffLoggedIn && liff.isInClient() && <span className="text-sm text-sky-700">(確認訊息已發送至聊天室)</span>}
                     </p>
-                    <button onClick={() => window.location.reload()} className="text-green-400 hover:text-green-300 font-medium underline underline-offset-4">
+                    <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="inline-flex items-center justify-center rounded-xl bg-sky-600 px-4 py-2.5 text-white font-semibold shadow-sm hover:bg-sky-500 transition-colors"
+                    >
                         繼續報名
                     </button>
                     {isLiffLoggedIn && liff.isInClient() && (
-                        <button onClick={() => liff.closeWindow()} className="block w-full mt-4 bg-slate-800 hover:bg-slate-700 text-white py-2 rounded-lg transition-colors border border-slate-700">
+                        <button
+                            type="button"
+                            onClick={() => liff.closeWindow()}
+                            className="block w-full mt-3 bg-slate-900 hover:bg-slate-800 text-white py-2.5 rounded-xl transition-colors"
+                        >
                             關閉視窗
                         </button>
                     )}
 
                     {!liff.isInClient() && (
                         <button
+                            type="button"
                             onClick={() => {
                                 const methodText = formData.paymentMethod === 'transfer' ? `匯款後五碼：${formData.lastFive}` :
                                     formData.paymentMethod === 'cash' ? '付款方式：現金' : '付款方式：LinePay';
-                                const msg = `【Vibe Coding 報名回報】\n姓名：${formData.name}\n場次：${sessions.find(s => s.id === selectedSessionId)?.displayDate}\n${methodText}\n來源：${formData.source}\n\n(系統自動產生)`;
+                                const msg = `【AI落地師培訓班 報名回報】\n姓名：${formData.name}\n場次：${sessions.find(s => s.id === selectedSessionId)?.displayDate}\n${methodText}\n來源：${formData.source}\n\n(系統自動產生)`;
                                 const url = `https://line.me/R/oaMessage/${LINE_OA_ID}/?${encodeURIComponent(msg)}`;
                                 window.location.href = url;
                             }}
-                            className="block w-full mt-4 bg-[#06c755] hover:bg-[#05b34c] text-white py-3 rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+                            className="block w-full mt-3 bg-[#06c755] hover:bg-[#05b34c] text-white py-3 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
                                 <path d="M8 15c4.418 0 8-3.134 8-7s-3.582-7-8-7-8 3.134-8 7c0 1.76.743 3.37 1.97 4.6-.097 1.016-.417 2.13-.771 2.966-.079.186.074.394.273.362 2.256-.37 3.597-.938 4.18-1.234A9.06 9.06 0 0 0 8 15z" />
@@ -228,141 +279,277 @@ const Signup = () => {
                             回報給官方帳號
                         </button>
                     )}
-                </div>
-            </div>
+                </section>
+            </main>
         );
     }
 
     return (
-        <div className="min-h-screen bg-black text-slate-200 font-sans antialiased overflow-x-hidden relative">
+        <main className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased overflow-x-hidden">
             <SEO
-                title="Vibe Coding 自動化吸客機器 | 實戰工作坊"
-                description="2026年，還在用嘴拓客？用AI做你的專屬程式設計師，打造自動化吸客機器。零基礎可學，實戰帶走專屬Web App與NFC科技名片！"
-                image="https://lionbaker.web.app/vibe/poster.jpg"
-                url="https://lionbaker.web.app/vibe"
+                title="AI落地師培訓班｜報名"
+                description="2026年在 AI 崛起的年代你還沒跟上嗎？零基礎也能學會 AI 變現與行銷整合，實戰打造拓客工具與電子名片。"
+                image={seoImage}
+                url={seoUrl}
                 type="website"
-                appName="Vibe Coding"
+                appName="LionBaker"
             />
 
-            {/* Matrix Background */}
-            <MatrixRain />
+            {/* Hero（Landing Page 視覺主體） */}
+            <header className="relative overflow-hidden">
+                <div className="absolute inset-0">
+                    {/* 背景圖：左側保留暗面積讓文字更清楚 */}
+                    <img
+                        src="/bg.jpg"
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 h-full w-full object-cover object-right"
+                        loading="eager"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/55 to-slate-950/20" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-slate-950/35 via-slate-950/0 to-slate-50/70" />
+                    <div className="absolute inset-0 opacity-60 lp-noise mix-blend-overlay" />
+                    <svg className="absolute -top-24 -right-24 w-[540px] h-[540px] opacity-60 lp-anim-drift" viewBox="0 0 600 600" aria-hidden="true">
+                        <defs>
+                            <radialGradient id="lpBlobA" cx="30%" cy="30%" r="70%">
+                                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.60" />
+                                <stop offset="58%" stopColor="#2563eb" stopOpacity="0.28" />
+                                <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.10" />
+                            </radialGradient>
+                        </defs>
+                        <path fill="url(#lpBlobA)" d="M419 72c58 34 115 85 132 149 17 63-7 139-43 198-36 60-86 104-150 130-64 26-141 35-201 11-60-25-104-84-122-147-18-64-9-133 24-194 33-61 90-114 153-147 63-32 132-33 207 0z" />
+                    </svg>
+                    <svg className="absolute -bottom-28 -left-28 w-[520px] h-[520px] opacity-55 lp-anim-float" viewBox="0 0 600 600" aria-hidden="true">
+                        <defs>
+                            <radialGradient id="lpBlobB" cx="60%" cy="40%" r="70%">
+                                <stop offset="0%" stopColor="#1d4ed8" stopOpacity="0.48" />
+                                <stop offset="55%" stopColor="#38bdf8" stopOpacity="0.22" />
+                                <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.10" />
+                            </radialGradient>
+                        </defs>
+                        <path fill="url(#lpBlobB)" d="M447 128c53 49 81 123 78 195-3 73-36 145-93 192-56 46-136 67-205 50-69-18-126-74-154-142-28-69-26-151 10-216 37-66 108-114 178-132 71-18 135-1 186 53z" />
+                    </svg>
+                    <svg className="absolute inset-0 opacity-[0.16]" aria-hidden="true">
+                        <defs>
+                            <pattern id="lpGrid" width="48" height="48" patternUnits="userSpaceOnUse">
+                                <path d="M48 0H0V48" fill="none" stroke="#0f172a" strokeOpacity="0.22" strokeWidth="1" />
+                            </pattern>
+                        </defs>
+                        <rect width="100%" height="100%" fill="url(#lpGrid)" />
+                    </svg>
+                </div>
 
-            {/* Main Content */}
-            <div className="relative z-10 max-w-xl mx-auto px-4 py-12">
+                <div className="relative mx-auto w-full max-w-6xl px-4 pt-10 pb-8 sm:pt-14 sm:pb-10">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                        <div className="text-left">
+                            <p className="inline-flex items-center gap-2 rounded-full bg-white/70 backdrop-blur border border-white/60 px-3 py-1 text-xs font-semibold text-sky-900 shadow-sm">
+                                <span className="inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
+                                2026 AI 落地實戰
+                            </p>
 
-                {/* Header */}
-                <div className="text-center mb-10">
-                    <span className="inline-block px-3 py-1 rounded-full bg-green-900/40 border border-green-500/30 text-green-400 text-xs font-bold tracking-widest mb-4 font-mono">
-                        // 2026_AI_AUTOMATION
-                    </span>
-                    <h1 className="text-4xl md:text-5xl font-black text-white mb-4 leading-tight tracking-tighter">
-                        2026年，還在用嘴拓客？<br />
-                        <span className="text-3xl md:text-4xl text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">AI已經幫你的同行多賺30%了！</span>
-                    </h1>
-                    <p className="text-slate-400 text-lg font-mono text-sm md:text-base mb-2">
-                        &lt;System&gt; 用AI做你的專屬程式設計師 &lt;/System&gt;<br />
-                        打造自動化吸客機器，讓你成為行業裡少數會用科技賺錢的人
-                    </p>
-                    <div className="inline-block bg-yellow-500/20 text-yellow-400 font-bold px-4 py-2 rounded-lg border border-yellow-500/30 text-sm mt-2">
-                        🔥 限時優惠：前10名報名，再送一對一AI拓客方案諮詢 (價值2,000元)
+                            <h1 className="mt-4 text-4xl sm:text-5xl font-black tracking-tight text-white drop-shadow-[0_10px_30px_rgba(0,0,0,0.45)]">
+                                AI落地師培訓班
+                            </h1>
+                            <p className="mt-3 text-base sm:text-lg text-slate-100/90 leading-relaxed max-w-xl drop-shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
+                                用最短時間做出「能拓客、能成交、能複製」的實戰工具。<span className="font-semibold text-white">不用寫程式</span>，零基礎也能上手。
+                            </p>
+
+                            <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                <div className="rounded-2xl bg-white/70 backdrop-blur border border-white/60 shadow-sm p-4">
+                                    <p className="text-xs font-semibold text-slate-600">上課形式</p>
+                                    <p className="mt-1 font-black text-slate-900">實作帶走</p>
+                                </div>
+                                <div className="rounded-2xl bg-white/70 backdrop-blur border border-white/60 shadow-sm p-4">
+                                    <p className="text-xs font-semibold text-slate-600">適合</p>
+                                    <p className="mt-1 font-black text-slate-900">零基礎</p>
+                                </div>
+                                <div className="rounded-2xl bg-white/70 backdrop-blur border border-white/60 shadow-sm p-4 col-span-2 sm:col-span-1">
+                                    <p className="text-xs font-semibold text-slate-600">成果</p>
+                                    <p className="mt-1 font-black text-slate-900">工具上線</p>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                                <a
+                                    href="#signup-form"
+                                    className="inline-flex items-center justify-center rounded-2xl bg-sky-600 px-5 py-3 text-white font-bold shadow-lg shadow-sky-600/20 hover:bg-sky-500 transition-colors"
+                                >
+                                    立即報名
+                                </a>
+                                <a
+                                    href="#course"
+                                    className="inline-flex items-center justify-center rounded-2xl bg-white/70 backdrop-blur px-5 py-3 text-slate-900 font-bold border border-white/60 shadow-sm hover:bg-white transition-colors"
+                                >
+                                    看課程介紹
+                                </a>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <article className="bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 overflow-hidden">
+                                <div className="relative">
+                                    <img
+                                        src="/signup.png"
+                                        alt="AI落地師培訓班活動海報"
+                                        className="w-full h-auto"
+                                        loading="lazy"
+                                    />
+                                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/35 via-transparent to-transparent" />
+                                </div>
+                            </article>
+                            <article className="bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 p-4 sm:p-6">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="text-left">
+                                        <h2 className="text-lg font-black text-slate-900">來聽聽同學怎麼說</h2>
+                                        <p className="mt-1 text-sm text-slate-600">記得開聲音</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleUnmuteVideo}
+                                        className={`shrink-0 rounded-2xl border px-3 py-1 text-xs font-bold transition-colors ${isVideoMuted ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+                                    >
+                                        {isVideoMuted ? '開聲音' : '已開聲音'}
+                                    </button>
+                                </div>
+                                <div className="mt-4 overflow-hidden rounded-2xl bg-slate-100">
+                                    <video
+                                        ref={videoRef}
+                                        className="w-full h-auto"
+                                        src="/signup.mp4"
+                                        poster="/signup.png"
+                                        autoPlay
+                                        loop
+                                        muted={isVideoMuted}
+                                        controls
+                                        playsInline
+                                        preload="auto"
+                                    />
+                                </div>
+                            </article>
+                        </div>
                     </div>
                 </div>
 
+                <div className="relative h-10 sm:h-14">
+                    <svg className="absolute inset-x-0 bottom-0 w-full h-full" viewBox="0 0 1440 96" preserveAspectRatio="none" aria-hidden="true">
+                        <path fill="#f8fafc" d="M0,64 C160,96 320,96 480,74 C640,53 800,10 960,10 C1120,10 1280,53 1440,42 L1440,96 L0,96 Z" />
+                    </svg>
+                </div>
+            </header>
 
-                {/* Course Highlights */}
-                <div className="mb-12 space-y-8">
-                    <div className="bg-black/60 border border-green-900/50 rounded-2xl p-6 md:p-8 backdrop-blur-sm shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-                        <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2 font-mono">
-                            <span className="text-green-500">_Core Value:</span> 課程核心價值
-                        </h2>
-                        <div className="space-y-6">
-                            <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">🎯</div>
-                                <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">Line@自動化篩客</h3>
-                                    <p className="text-slate-400 leading-relaxed text-sm">
-                                        不用再大海撈針，AI幫你精準識別高意向客戶，把時間留給成交。
+            <div className="mx-auto w-full max-w-6xl px-4 pb-10 sm:pb-12">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    {/* 左側：內容（更像 Landing Page 的節奏） */}
+                    <section id="course" className="space-y-6">
+                        <article className="bg-white rounded-3xl shadow-xl border border-slate-200 p-5 sm:p-7 text-left">
+                            <h2 className="text-lg font-bold text-slate-900">課程介紹（完整）</h2>
+                            <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+                                2026 年在 AI 崛起的年代你還沒跟上嗎？這堂課的目標很明確：<span className="font-semibold text-slate-900">把你的想法落地成「可以拿來拓客、成交、複製」的工具</span>。
+                                不用寫程式、不用背語法；你只要會打字用 LINE，就能在一天內做出可用的成果。
+                            </p>
+
+                            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-sm font-bold text-slate-900">不用基礎</p>
+                                    <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+                                        你不是來「學寫程式」的，你是來<span className="font-semibold">學怎麼解決問題</span>的。
+                                        我們用可複製的流程，讓你用 AI 做出工具與內容。
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-sm font-bold text-slate-900">免買主機</p>
+                                    <p className="mt-2 text-sm text-slate-600 leading-relaxed">
+                                        提供專屬雲端平台與示範流程，從提示詞到上架部署一路帶你完成，減少卡關與試錯成本。
                                     </p>
                                 </div>
                             </div>
-                            <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">🚀</div>
-                                <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">零程式碼打造 Web App</h3>
-                                    <p className="text-slate-400 leading-relaxed text-sm">
-                                        零基礎可學！不用寫程式，只要會說話，AI就幫你做出專屬吸客工具。免買主機，獨家雲端平台一鍵發布，直接省下高昂成本。
-                                    </p>
+
+                            <div className="mt-5 grid grid-cols-1 gap-4">
+                                <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
+                                    <p className="text-sm font-bold text-sky-900">你會帶走的成果</p>
+                                    <ul className="mt-2 space-y-1.5 text-sm text-sky-900/80 list-disc list-inside">
+                                        <li>課堂實作你的專屬電子名片（可展示、可分享、可引導成交）</li>
+                                        <li>課堂實作產業拓客工具（可依你的產業情境客製）</li>
+                                        <li>一套可複製的「AI 落地流程」：從需求拆解 → 提示詞 → 產出 → 整合 → 上線</li>
+                                    </ul>
+                                </div>
+
+                                <div className="rounded-2xl bg-white border border-slate-200 p-4">
+                                    <p className="text-sm font-bold text-slate-900">課程亮點（對應舊版海報）</p>
+                                    <ul className="mt-2 space-y-1.5 text-sm text-slate-600 list-disc list-inside">
+                                        <li>落地實現你的想法：不用打一行程式也能做出來</li>
+                                        <li>不再「學寫程式」：只要會打字用 LINE，AI 幫你做出工具</li>
+                                        <li>讓你駕馭 AI：用在行銷、內容、成交流程，成為少數會用科技賺錢的人</li>
+                                    </ul>
                                 </div>
                             </div>
-                            <div className="flex gap-4">
-                                <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center shrink-0 border border-green-500/30 text-2xl">💡</div>
-                                <div>
-                                    <h3 className="text-lg font-bold text-white mb-1">實戰帶走：科技賦能</h3>
-                                    <p className="text-slate-400 leading-relaxed text-sm">
-                                        課後直接擁有「專屬 Web App」與「NFC科技名片」。加碼再送：免費製作個人Line貼圖，大幅提升品牌曝光，2026年絕不被淘汰！
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
-                    {/* Lecturers */}
-                    <div>
-                        <h2 className="text-2xl font-bold text-white mb-10 text-center font-mono">
-                            &lt;Mentors /&gt;
-                        </h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 px-4">
-                            {/* Lecturer 1 - Jiaji */}
-                            <div className="relative mt-8 pt-12 pb-8 px-6 bg-black/40 rounded-2xl border border-green-500/30 text-center shadow-[0_0_15px_rgba(34,197,94,0.1)] backdrop-blur-md">
-                                <div className="absolute -top-12 left-1/2 -translate-x-1/2 p-0.5 rounded-full bg-gradient-to-b from-green-400 to-green-900 shadow-[0_0_20px_rgba(34,197,94,0.6)]">
-                                    <img
-                                        src="https://lionbaker.web.app/vibe/AI1.png"
-                                        alt="陳嘉吉"
-                                        className="w-24 h-24 rounded-full border-4 border-black object-cover bg-black"
-                                    />
-                                </div>
-                                <h3 className="text-2xl font-bold text-white mb-1 mt-2">陳嘉吉</h3>
-                                <p className="text-green-400 text-sm mb-4 font-mono">幫100+業務團隊搭建AI拓客系統<br />20年資深架構師</p>
-                                <div className="w-8 h-1 bg-green-500/50 mx-auto mb-4 rounded-full"></div>
-                                <p className="text-slate-300 text-sm leading-relaxed text-justify">
-                                    20年工程師邏輯腦。他是最懂如何靈活運用科技解決痛點的實戰派。不只給你方向，更給你武器！教你用自然語言指揮AI，打造自動化吸客機器。
-                                </p>
+                            <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                <p className="text-sm font-bold text-slate-900">特別加碼</p>
+                                <ul className="mt-2 space-y-1.5 text-sm text-slate-600 list-disc list-inside">
+                                    <li>教你用 AI 創作吸睛的 LINE 貼圖，並學會如何上架</li>
+                                    <li>教你用 NFC 貼片，打造超高科技電子名片</li>
+                                    <li>教你用 AI 生成源源不絕的短影音腳本</li>
+                                </ul>
                             </div>
 
-                            {/* Lecturer 2 - Rich */}
-                            <div className="relative mt-8 pt-12 pb-8 px-6 bg-black/40 rounded-2xl border border-green-500/30 text-center shadow-[0_0_15px_rgba(34,197,94,0.1)] backdrop-blur-md">
-                                <div className="absolute -top-12 left-1/2 -translate-x-1/2 p-0.5 rounded-full bg-gradient-to-b from-cyan-400 to-cyan-900 shadow-[0_0_20px_rgba(34,211,238,0.6)]">
-                                    <img
-                                        src="https://lionbaker.web.app/vibe/AI2.png"
-                                        alt="Rich"
-                                        className="w-24 h-24 rounded-full border-4 border-black object-cover bg-black"
-                                    />
-                                </div>
-                                <h3 className="text-2xl font-bold text-white mb-1 mt-2">Rich</h3>
-                                <p className="text-cyan-400 text-sm mb-4 font-mono">用AI幫客戶業績翻倍<br />財商系統講師</p>
-                                <div className="w-8 h-1 bg-cyan-500/50 mx-auto mb-4 rounded-full"></div>
-                                <p className="text-slate-300 text-sm leading-relaxed text-justify">
-                                    具備豐富業務與財商教學經驗。他能用最簡單的方式，讓你理解複雜的商業邏輯與科技變現。教你駕馭AI，成為少數會用新科技大把賺錢的人。
-                                </p>
+                            <div className="mt-5 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                <p className="text-sm font-bold text-slate-900">提醒與規則</p>
+                                <ul className="mt-2 space-y-1.5 text-sm text-slate-600 list-disc list-inside">
+                                    <li>未達開班人數，課程將視情況延班：可選擇延班或退款。</li>
+                                </ul>
                             </div>
-                        </div>
-                    </div>
+                        </article>
+                        <article className="bg-white rounded-3xl shadow-xl border border-slate-200 p-5 sm:p-7 text-left">
+                            <h2 className="text-lg font-bold text-slate-900">課程流程（一天做出成果）</h2>
+                            <ol className="mt-4 space-y-3">
+                                {[
+                                    { title: '打開大腦｜學習新思維', desc: '2026 年最值錢的不是技術，是你的思維提升，打造不被淘汰的硬實力。' },
+                                    { title: '各種 AI 案例介紹', desc: '把你的產業情境與目標拆成可落地的功能與內容。' },
+                                    { title: '如何免學提示詞做出程式', desc: '用可複製的提示詞框架，快速產生內容與工具雛形。' },
+                                    { title: '超簡單佈署程式', desc: '不用電腦也能佈署程式。' },
+                                    { title: 'LINE 貼圖實作', desc: '教你快速打造自己吸睛武器。' },
+                                    { title: 'NFC 貼片實作', desc: '用手機施展魔法，創造更多有價值的用途。' },
+                                    { title: '短影音腳本生成', desc: '用工具快速解決你短影音腳本饋乏的問題。' }
+                                ].map((step, idx) => (
+                                    <li key={step.title} className="flex gap-3 rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                                        <div className="mt-0.5 shrink-0 w-9 h-9 rounded-2xl bg-white border border-slate-200 flex items-center justify-center font-black text-sky-700">
+                                            {idx + 1}
+                                        </div>
+                                        <div>
+                                            <p className="font-bold text-slate-900">{step.title}</p>
+                                            <p className="mt-1 text-sm text-slate-600 leading-relaxed">{step.desc}</p>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ol>
+                        </article>
+                    </section>
 
-                    {/* Form Section */}
-                    <div className="bg-black/80 backdrop-blur-xl border border-green-500/30 rounded-2xl p-6 md:p-8 shadow-[0_0_40px_rgba(34,197,94,0.15)] relative overflow-hidden">
-                        {/* Decorative scanning line */}
-                        <div className="absolute top-0 left-0 w-full h-1 bg-green-500/50 shadow-[0_0_15px_#22c55e] animate-scan-line"></div>
+                    {/* 右側：報名表單 */}
+                    <section id="signup-form" className="bg-white rounded-3xl shadow-xl border border-slate-200 p-4 sm:p-6">
+                        <h2 className="text-xl font-bold text-slate-900">立即報名</h2>
+                        <p className="mt-1 text-sm text-slate-600">
+                            請填寫資料完成報名，我們會以你提供的資訊進行後續確認。
+                        </p>
 
-                        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2 font-mono">
-                            <span className="w-1.5 h-6 bg-green-500"></span>
-                            [ 立即報名 ] JOIN_NOW
-                        </h2>
-
-                        <form onSubmit={handleSubmit} className="space-y-5">
+                        <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-5">
 
                             {/* Session Selection */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-3 font-mono">:: 選擇場次 ::</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-3">
+                                    選擇場次 <span className="text-rose-600">*</span>
+                                </label>
+                                {sessionsError && (
+                                    <div className="mb-3 p-3 bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-xl">
+                                        {sessionsError}
+                                    </div>
+                                )}
+                                {sessionsLoading ? (
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                                        正在載入場次...
+                                    </div>
+                                ) : (
                                 <div className="grid grid-cols-1 gap-3">
                                     {sessions.map(session => {
                                         const isFull = (session.currentCount || 0) >= (session.maxCapacity || 50);
@@ -370,28 +557,38 @@ const Signup = () => {
                                         return (
                                             <div
                                                 key={session.id}
-                                                className={`relative border rounded-xl p-4 cursor-pointer transition-all ${selectedSessionId === session.id ? 'border-green-500 bg-green-900/20 shadow-[0_0_15px_rgba(34,197,94,0.2)]' : 'border-slate-800 hover:border-slate-600 bg-slate-900/50'}`}
+                                                role="button"
+                                                tabIndex={0}
+                                                className={`relative border rounded-2xl p-4 cursor-pointer transition-all outline-none ${selectedSessionId === session.id ? 'border-sky-400 bg-sky-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
                                                 onClick={() => handleSessionSelect(session.id)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') handleSessionSelect(session.id);
+                                                }}
                                             >
                                                 <div className="flex justify-between items-center mb-1">
                                                     <div className="flex items-center gap-2">
-                                                        <div className={`w-3 h-3 rounded-full ${isFull ? 'bg-yellow-500 animate-pulse' : selectedSessionId === session.id ? 'bg-green-500 shadow-[0_0_10px_#22c55e]' : 'bg-slate-600'}`}></div>
-                                                        <span className="font-bold text-white text-lg">{session.displayDate}</span>
+                                                        <div className={`w-2.5 h-2.5 rounded-full ${isFull ? 'bg-amber-500' : selectedSessionId === session.id ? 'bg-sky-500' : 'bg-slate-300'}`}></div>
+                                                        <span className="font-bold text-slate-900 text-base sm:text-lg">{session.displayDate}</span>
                                                     </div>
                                                     <div className="flex gap-2">
                                                         {isFull ? (
-                                                            <div className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded border border-yellow-500/30">額滿候補中</div>
+                                                            <div className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg border border-amber-200">額滿候補中</div>
                                                         ) : (
-                                                            selectedSessionId === session.id && <div className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded border border-green-500/30">已選擇</div>
+                                                            selectedSessionId === session.id && <div className="text-xs bg-sky-50 text-sky-700 px-2 py-0.5 rounded-lg border border-sky-200">已選擇</div>
                                                         )}
                                                     </div>
                                                 </div>
                                                 <div className="pl-5">
-                                                    <div className="text-slate-300 font-bold mb-1">
-                                                        {session.title || 'Vibe Coding 基礎實戰班'}
+                                                    <div className="text-slate-800 font-semibold mb-1">
+                                                        {session.title || 'AI落地師培訓班'}
                                                     </div>
-                                                    <div className="text-sm text-slate-400 mb-2 flex items-start gap-1">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 mt-0.5 text-green-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    {!!session.note && (
+                                                        <div className="mb-2 rounded-xl bg-white/70 border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                                                            <span className="whitespace-pre-line">{session.note}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="text-sm text-slate-600 mb-2 flex items-start gap-1">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 mt-0.5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                                                         </svg>
@@ -399,12 +596,14 @@ const Signup = () => {
                                                     </div>
                                                     <div className="flex justify-between items-end">
                                                         <div className="flex items-baseline gap-2">
-                                                            <span className="text-xl font-bold text-green-400 font-mono">${session.price?.toLocaleString()}</span>
-                                                            <span className="text-sm text-slate-500 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>
+                                                            <span className="text-xl font-black text-sky-700">${session.price?.toLocaleString()}</span>
+                                                            {!!session.originalPrice && (
+                                                                <span className="text-sm text-slate-400 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>
+                                                            )}
                                                         </div>
-                                                        <div className="text-xs text-slate-600 font-mono">
+                                                        <div className="text-xs text-slate-500">
                                                             {isFull ? (
-                                                                <span className="text-yellow-500 font-bold">已額滿，您的報名將排入備取之中</span>
+                                                                <span className="text-amber-700 font-semibold">已額滿，您的報名將排入備取</span>
                                                             ) : (
                                                                 `名額狀態: 剩餘 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`
                                                             )}
@@ -415,19 +614,22 @@ const Signup = () => {
                                         );
                                     })}
                                 </div>
+                                )}
                             </div>
 
                             {/* Payment Method */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-2 font-mono">:: 付款方式 ::</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                    付款方式 <span className="text-rose-600">*</span>
+                                </label>
                                 <div className="grid grid-cols-3 gap-2">
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'transfer' }))} className={`p-3 rounded-lg border text-sm font-bold transition-all ${formData.paymentMethod === 'transfer' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-black/50 border-slate-700 text-slate-400'}`}>
+                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'transfer' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'transfer' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
                                         轉帳匯款
                                     </button>
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'cash' }))} className={`p-3 rounded-lg border text-sm font-bold transition-all ${formData.paymentMethod === 'cash' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-black/50 border-slate-700 text-slate-400'}`}>
+                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'cash' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'cash' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
                                         現金支付
                                     </button>
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'linepay' }))} className={`p-3 rounded-lg border text-sm font-bold transition-all ${formData.paymentMethod === 'linepay' ? 'bg-[#06c755] border-[#06c755] text-white' : 'bg-black/50 border-slate-700 text-slate-400'}`}>
+                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'linepay' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'linepay' ? 'bg-[#06c755] border-[#06c755] text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
                                         LinePay
                                     </button>
                                 </div>
@@ -435,7 +637,9 @@ const Signup = () => {
 
                             {/* Name */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-1 font-mono">:: 真實姓名 ::</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                    真實姓名 <span className="text-rose-600">*</span>
+                                </label>
                                 <input
                                     type="text"
                                     name="name"
@@ -443,13 +647,15 @@ const Signup = () => {
                                     onChange={handleChange}
                                     required
                                     placeholder="請輸入您的姓名"
-                                    className="w-full px-4 py-3 rounded-lg bg-black/50 border border-slate-700 text-white focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none transition-colors backdrop-blur-sm"
+                                    className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
                                 />
                             </div>
 
                             {/* Phone */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-1 font-mono">:: 手機號碼 ::</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                    手機號碼 <span className="text-rose-600">*</span>
+                                </label>
                                 <input
                                     type="tel"
                                     name="phone"
@@ -457,25 +663,38 @@ const Signup = () => {
                                     onChange={handleChange}
                                     required
                                     placeholder="0912-345-678"
-                                    className="w-full px-4 py-3 rounded-lg bg-black/50 border border-slate-700 text-white focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none transition-colors backdrop-blur-sm"
+                                    className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
+                                />
+                            </div>
+
+                            {/* Email (Optional) */}
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1">Email（選填）</label>
+                                <input
+                                    type="email"
+                                    name="email"
+                                    value={formData.email}
+                                    onChange={handleChange}
+                                    placeholder="name@example.com"
+                                    className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
                                 />
                             </div>
 
                             {/* Source */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-300 mb-3 font-mono">:: 推薦人 / 來源 :: <span className="text-red-400">*</span></label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-3">推薦人 / 來源 <span className="text-rose-600">*</span></label>
                                 <div className="grid grid-cols-2 gap-3 mb-3">
                                     <button
                                         type="button"
                                         onClick={() => setSourceOption('嘉吉老師')}
-                                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${sourceOption === '嘉吉老師' ? 'bg-green-600 border-green-500 text-black shadow-[0_0_15px_rgba(22,163,74,0.4)]' : 'bg-black/50 border-slate-700 text-slate-400 hover:border-green-500/50'}`}
+                                        className={`p-3 rounded-xl border text-sm font-semibold transition-all ${sourceOption === '嘉吉老師' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}
                                     >
                                         嘉吉老師
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setSourceOption('Rich老師')}
-                                        className={`p-3 rounded-lg border text-sm font-bold transition-all ${sourceOption === 'Rich老師' ? 'bg-cyan-600 border-cyan-500 text-black shadow-[0_0_15px_rgba(8,145,178,0.4)]' : 'bg-black/50 border-slate-700 text-slate-400 hover:border-cyan-500/50'}`}
+                                        className={`p-3 rounded-xl border text-sm font-semibold transition-all ${sourceOption === 'Rich老師' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}
                                     >
                                         Rich老師
                                     </button>
@@ -483,7 +702,7 @@ const Signup = () => {
                                 <button
                                     type="button"
                                     onClick={() => setSourceOption('Other')}
-                                    className={`w-full p-3 rounded-lg border text-sm font-bold transition-all mb-3 ${sourceOption === 'Other' ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]' : 'bg-black/50 border-slate-700 text-slate-400 hover:border-purple-500/50'}`}
+                                    className={`w-full p-3 rounded-xl border text-sm font-semibold transition-all mb-3 ${sourceOption === 'Other' ? 'bg-sky-50 border-sky-200 text-sky-900' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}
                                 >
                                     其他
                                 </button>
@@ -495,31 +714,33 @@ const Signup = () => {
                                         onChange={(e) => setCustomSource(e.target.value)}
                                         required={sourceOption === 'Other'}
                                         placeholder="請填寫推薦人或來源 (例如: FB廣告)"
-                                        className="w-full px-4 py-3 rounded-lg bg-black/50 border border-slate-700 text-white focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition-colors font-mono"
+                                        className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
                                     />
                                 )}
                             </div>
 
                             {/* Payment Details (Conditional) */}
                             {formData.paymentMethod === 'transfer' && (
-                                <div className="bg-slate-900/60 rounded-xl p-5 border border-slate-700/80">
-                                    <div className="flex items-center gap-2 mb-3 text-green-400 font-bold text-sm uppercase tracking-wider font-mono">
+                                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                                    <div className="flex items-center gap-2 mb-3 text-sky-700 font-bold text-sm tracking-wide">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                                         </svg>
-                                        PAYMENT_INFO
+                                        匯款資訊
                                     </div>
-                                    <div className="space-y-2 text-sm text-slate-300 mb-4 font-mono">
-                                        <div className="flex justify-between"><span>銀行代碼</span><span className="text-white">國泰世華 (013)</span></div>
-                                        <div className="flex justify-between"><span>分行</span><span className="text-white">敦化分行</span></div>
-                                        <div className="flex justify-between"><span>戶名</span><span className="text-white">焙獅健康顧問有限公司</span></div>
-                                        <div className="mt-2 pt-2 border-t border-slate-700 text-center">
-                                            <span className="block text-xs text-slate-500 mb-1">// 匯款帳號</span>
-                                            <span className="text-xl font-bold text-green-400 select-all tracking-widest">212035012017</span>
+                                    <div className="space-y-2 text-sm text-slate-700 mb-4">
+                                        <div className="flex justify-between gap-4"><span className="text-slate-500">銀行代碼</span><span className="font-semibold text-slate-900">國泰世華 (013)</span></div>
+                                        <div className="flex justify-between gap-4"><span className="text-slate-500">分行</span><span className="font-semibold text-slate-900">敦化分行</span></div>
+                                        <div className="flex justify-between gap-4"><span className="text-slate-500">戶名</span><span className="font-semibold text-slate-900">焙獅健康顧問有限公司</span></div>
+                                        <div className="mt-2 pt-3 border-t border-slate-200 text-center">
+                                            <span className="block text-xs text-slate-500 mb-1">匯款帳號</span>
+                                            <span className="text-xl font-black text-sky-700 select-all tracking-widest">212035012017</span>
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-slate-300 mb-2 font-mono">:: 匯款帳號後五碼 ::</label>
+                                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                            匯款帳號後五碼 <span className="text-rose-600">*</span>
+                                        </label>
                                         <div className="relative">
                                             <input
                                                 type="text"
@@ -529,61 +750,60 @@ const Signup = () => {
                                                 required
                                                 maxLength={5}
                                                 placeholder="XXXXX"
-                                                className="w-full px-4 py-3 rounded-lg bg-black border border-slate-600 text-green-400 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none transition-colors font-mono tracking-[0.5em] text-center text-lg placeholder-slate-700"
+                                                className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors tracking-[0.5em] text-center text-lg placeholder-slate-300"
                                             />
-                                            <div className="absolute right-3 top-4 text-xs text-slate-500 font-mono">{formData.lastFive.length}/5</div>
+                                            <div className="absolute right-3 top-4 text-xs text-slate-500">{formData.lastFive.length}/5</div>
                                         </div>
                                     </div>
                                 </div>
                             )}
                             {formData.paymentMethod === 'linepay' && (
-                                <div className="bg-[#00c53d]/10 rounded-xl p-5 border border-[#00c53d]/50 text-center">
-                                    <h3 className="text-white font-bold mb-2">LinePay 付款</h3>
-                                    <p className="text-[#00c53d] text-sm">請於LinePay繳費後通知銷帳。</p>
+                                <div className="bg-sky-50 rounded-2xl p-5 border border-sky-200">
+                                    <h3 className="text-slate-900 font-bold mb-1">LinePay 付款</h3>
+                                    <p className="text-sky-900 text-sm">請於 LinePay 繳費後通知銷帳。</p>
                                 </div>
                             )}
                             {formData.paymentMethod === 'cash' && (
-                                <div className="bg-amber-500/10 rounded-xl p-5 border border-amber-500/50 text-center">
-                                    <h3 className="text-white font-bold mb-2">現場繳費</h3>
-                                    <p className="text-amber-500 text-sm">請先繳交費用後通知銷帳。</p>
+                                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                                    <h3 className="text-slate-900 font-bold mb-1">現場繳費</h3>
+                                    <p className="text-slate-700 text-sm">請先繳交費用後通知銷帳。</p>
                                 </div>
                             )}
 
                             {/* Error Msg */}
                             {error && (
-                                <div className="p-3 bg-red-900/30 border border-red-800 text-red-300 text-sm rounded-lg text-center font-mono">
-                                    [錯誤] {error}
+                                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded-xl text-center">
+                                    {error}
                                 </div>
                             )}
 
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-4 px-4 rounded-xl shadow-[0_0_20px_rgba(22,163,74,0.4)] transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
+                                className="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold py-4 px-4 rounded-2xl shadow-sm transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {loading ? (
                                     <>
-                                        <svg className="animate-spin h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                         </svg>
-                                        <span className="font-mono">請稍候...</span>
+                                        <span>請稍候...</span>
                                     </>
                                 ) : (
                                     <>
-                                        <span className="group-hover:tracking-widest transition-all duration-300">確認報名 / CONFIRM</span>
+                                        <span>確認報名</span>
                                     </>
                                 )}
                             </button>
                         </form>
-                        <footer className="mt-12 text-center text-slate-600 text-xs font-mono">
-                            <p>&copy; 2026 Vibe Coding. SYSTEM_ONLINE.</p>
+                        <footer className="mt-8 text-center text-slate-400 text-xs">
+                            <p>&copy; 2026 LionBaker</p>
                         </footer>
-                    </div>
+                    </section>
                 </div>
-
             </div>
-        </div>
+        </main>
     );
 };
 

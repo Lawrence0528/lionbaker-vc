@@ -7,7 +7,11 @@ import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 const ADMIN_EMAIL = 'charge0528@gmail.com';
 
 const SignupAdmin = () => {
+    const isDev = import.meta?.env?.DEV;
+    const isMockMode = isDev && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mock') === '1';
+
     const [adminEmail, setAdminEmail] = useState(null);
+    const isAdmin = !!adminEmail || isMockMode;
     const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations'
     const [sessions, setSessions] = useState([]);
     const [registrations, setRegistrations] = useState([]);
@@ -21,14 +25,16 @@ const SignupAdmin = () => {
     // Modal State: Create Session
     const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
     const [newSession, setNewSession] = useState({
-        title: 'Vibe Coding 基礎實戰班',
+        title: 'AI落地師培訓班',
         date: '',
-        time: '13:00',
-        location: '',
-        address: '',
-        price: 1980,
+        time: '10:00',
+        endTime: '16:00',
+        location: 'TOP SPACE商務中心',
+        address: '臺中市中區民族路23號3樓',
+        price: 3980,
         originalPrice: 5000,
-        maxCapacity: 50
+        maxCapacity: 20,
+        note: ''
     });
 
     // Modal State: Edit Session
@@ -38,11 +44,13 @@ const SignupAdmin = () => {
         title: '',
         date: '',
         time: '',
+        endTime: '',
         location: '',
         address: '',
         price: 0,
         originalPrice: 0,
         maxCapacity: 50,
+        note: '',
         status: 'open'
     });
 
@@ -53,10 +61,51 @@ const SignupAdmin = () => {
         status: '',
         paymentMethod: '',
         receivedAmount: 0,
-        adminNote: ''
+        adminNote: '',
+        sessionId: ''
     });
 
     useEffect(() => {
+        if (isMockMode) {
+            const now = new Date();
+            const iso = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 13, 0, 0).toISOString();
+            const mockSessions = [
+                {
+                    id: 'mock_session_01',
+                    title: 'AI落地師培訓班（本地假資料）',
+                    date: iso,
+                    endTime: '16:00',
+                    note: '（本地假資料）可填寫場次備註，例如：請提早 10 分鐘報到。',
+                    location: 'TOP SPACE 商務中心',
+                    address: '臺中市中區民族路23號3樓',
+                    price: 1980,
+                    originalPrice: 5000,
+                    maxCapacity: 50,
+                    currentCount: 8,
+                    status: 'open'
+                },
+                {
+                    id: 'mock_session_02',
+                    title: 'AI落地師培訓班 進階班（本地假資料）',
+                    date: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 21, 13, 0, 0).toISOString(),
+                    endTime: '18:00',
+                    note: '',
+                    location: 'TOP SPACE 商務中心',
+                    address: '臺中市中區民族路23號3樓',
+                    price: 2980,
+                    originalPrice: 6800,
+                    maxCapacity: 30,
+                    currentCount: 30,
+                    status: 'open'
+                }
+            ];
+            setAdminEmail('local-dev@mock');
+            setSessions(mockSessions);
+            setLoading(false);
+            setError('');
+            return;
+        }
+
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 if (user.email === ADMIN_EMAIL) {
@@ -74,7 +123,7 @@ const SignupAdmin = () => {
             }
         });
         return () => unsubscribe();
-    }, []);
+    }, [isMockMode]);
 
     const handleLogin = async () => {
         try {
@@ -95,6 +144,9 @@ const SignupAdmin = () => {
     const fetchSessions = async (userId) => {
         setLoading(true);
         try {
+            if (isMockMode) return;
+            // 注意：onAuthStateChanged 內 setAdminEmail 是非同步更新，這裡用參數 userId(=email) 判斷可避免競態
+            if (userId !== ADMIN_EMAIL) throw new Error('需要管理員權限');
             const getSessionsFn = httpsCallable(functions, 'getVibeSessions');
             const result = await getSessionsFn({ userId });
             setSessions(result.data.sessions || []);
@@ -115,10 +167,57 @@ const SignupAdmin = () => {
         setSelectedSession(session);
         setViewMode('registrations');
         try {
+            if (isMockMode) {
+                const mockRegs = [
+                    {
+                        id: 'mock_reg_01',
+                        createdAt: new Date().toISOString(),
+                        name: '王小明',
+                        phone: '0912-345-678',
+                        source: '嘉吉老師',
+                        paymentMethod: 'transfer',
+                        lastFive: '12345',
+                        receivedAmount: 1980,
+                        status: 'confirmed',
+                        count: 1,
+                        adminNote: '已核對'
+                    },
+                    {
+                        id: 'mock_reg_02',
+                        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+                        name: '陳小華',
+                        phone: '0988-000-111',
+                        source: 'FB廣告',
+                        paymentMethod: 'cash',
+                        receivedAmount: 0,
+                        status: 'pending',
+                        count: 2,
+                        adminNote: ''
+                    },
+                    {
+                        id: 'mock_reg_03',
+                        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+                        name: '林小美',
+                        phone: '0900-222-333',
+                        source: 'Rich老師',
+                        paymentMethod: 'linepay',
+                        receivedAmount: 1980,
+                        status: 'cancelled',
+                        count: 1,
+                        adminNote: '臨時有事'
+                    }
+                ];
+                setRegistrations(mockRegs);
+                setLoading(false);
+                return;
+            }
+            if (!adminEmail) throw new Error('需要管理員權限');
+
             const getRegFn = httpsCallable(functions, 'getVibeRegistrations');
-            const result = await getRegFn({  sessionId: session.id });
+            const result = await getRegFn({ sessionId: session.id });
             const regs = result.data.registrations || [];
             setRegistrations(regs);
+            setError('');
 
             // Auto-Sync Capacity Logic
             // Calculate active count from fetched registrations
@@ -153,16 +252,37 @@ const SignupAdmin = () => {
 
     const handleCreateSession = async (e) => {
         e.preventDefault();
+        if (!isAdmin) return;
         setOpLoading(true);
         try {
+            if (isMockMode) {
+                const isoDate = new Date(`${newSession.date}T${newSession.time}`).toISOString();
+                const endIsoDate = newSession.endTime ? new Date(`${newSession.date}T${newSession.endTime}`).toISOString() : null;
+                const created = {
+                    id: `mock_session_${Math.random().toString(16).slice(2)}`,
+                    ...newSession,
+                    date: isoDate,
+                    endDate: endIsoDate,
+                    price: Number(newSession.price),
+                    originalPrice: Number(newSession.originalPrice),
+                    maxCapacity: Number(newSession.maxCapacity),
+                    currentCount: 0,
+                    status: 'open'
+                };
+                setSessions(prev => [created, ...prev]);
+                setIsCreateSessionOpen(false);
+                alert('（本地假資料）場次已建立');
+                return;
+            }
             // Combine Date & Time
             const isoDate = new Date(`${newSession.date}T${newSession.time}`).toISOString();
+            const endIsoDate = newSession.endTime ? new Date(`${newSession.date}T${newSession.endTime}`).toISOString() : null;
 
             const createFn = httpsCallable(functions, 'createVibeSession');
             await createFn({
-                
                 ...newSession,
-                date: isoDate
+                date: isoDate,
+                endDate: endIsoDate
             });
 
             setIsCreateSessionOpen(false);
@@ -178,15 +298,18 @@ const SignupAdmin = () => {
     const openEditSessionModal = (session) => {
         setSessionToEdit(session);
         const dateObj = new Date(session.date);
+        const endDateObj = session.endDate ? new Date(session.endDate) : null;
         setEditSessionForm({
             title: session.title,
             date: session.date.split('T')[0],
             time: `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`,
+            endTime: session.endTime || (endDateObj ? `${String(endDateObj.getHours()).padStart(2, '0')}:${String(endDateObj.getMinutes()).padStart(2, '0')}` : ''),
             location: session.location,
             address: session.address,
             price: session.price,
             originalPrice: session.originalPrice,
             maxCapacity: session.maxCapacity || 50,
+            note: session.note || '',
             status: session.status || 'open'
         });
         setIsEditSessionOpen(true);
@@ -194,17 +317,35 @@ const SignupAdmin = () => {
 
     const handleUpdateSession = async (e) => {
         e.preventDefault();
+        if (!isAdmin) return;
         setOpLoading(true);
         try {
+            if (isMockMode) {
+                const isoDate = new Date(`${editSessionForm.date}T${editSessionForm.time}`).toISOString();
+                const endIsoDate = editSessionForm.endTime ? new Date(`${editSessionForm.date}T${editSessionForm.endTime}`).toISOString() : null;
+                setSessions(prev => prev.map(s => s.id === sessionToEdit.id ? {
+                    ...s,
+                    ...editSessionForm,
+                    date: isoDate,
+                    endDate: endIsoDate,
+                    price: Number(editSessionForm.price),
+                    originalPrice: Number(editSessionForm.originalPrice),
+                    maxCapacity: Number(editSessionForm.maxCapacity)
+                } : s));
+                setIsEditSessionOpen(false);
+                alert('（本地假資料）場次已更新');
+                return;
+            }
             const isoDate = new Date(`${editSessionForm.date}T${editSessionForm.time}`).toISOString();
+            const endIsoDate = editSessionForm.endTime ? new Date(`${editSessionForm.date}T${editSessionForm.endTime}`).toISOString() : null;
 
             const updateFn = httpsCallable(functions, 'updateVibeSession');
             await updateFn({
-                
                 sessionId: sessionToEdit.id,
                 updates: {
                     ...editSessionForm,
                     date: isoDate,
+                    endDate: endIsoDate,
                     price: Number(editSessionForm.price),
                     originalPrice: Number(editSessionForm.originalPrice),
                     maxCapacity: Number(editSessionForm.maxCapacity)
@@ -229,27 +370,56 @@ const SignupAdmin = () => {
             status: reg.status || 'pending',
             paymentMethod: reg.paymentMethod || 'transfer',
             receivedAmount: reg.receivedAmount || (selectedSession?.price || 1980),
-            adminNote: reg.adminNote || ''
+            adminNote: reg.adminNote || '',
+            sessionId: reg.sessionId || selectedSession?.id || ''
         });
         setIsEditRegOpen(true);
     };
 
     const handleUpdateRegistration = async () => {
         if (!editTarget) return;
+        if (!isAdmin) return;
         setOpLoading(true);
         try {
+            const nextSessionId = editForm.sessionId || editTarget.sessionId || selectedSession?.id || '';
+            if (!nextSessionId) {
+                alert('請先選擇要歸屬的場次');
+                return;
+            }
+
+            const targetSession = sessions.find(s => s.id === nextSessionId) || null;
+            const willMoveToAnotherSession = !!(editTarget.sessionId || selectedSession?.id) && nextSessionId !== (editTarget.sessionId || selectedSession?.id);
+
+            if (isMockMode) {
+                if (willMoveToAnotherSession) {
+                    setRegistrations(prev => prev.filter(r => r.id !== editTarget.id));
+                } else {
+                    setRegistrations(prev => prev.map(r => r.id === editTarget.id ? { ...r, ...editForm, receivedAmount: Number(editForm.receivedAmount) } : r));
+                }
+                setIsEditRegOpen(false);
+                setEditTarget(null);
+                return;
+            }
             const updateFn = httpsCallable(functions, 'updateVibeRegistration');
             await updateFn({
                 
                 registrationId: editTarget.id,
                 updates: {
                     ...editForm,
-                    receivedAmount: Number(editForm.receivedAmount)
+                    receivedAmount: Number(editForm.receivedAmount),
+                    sessionId: nextSessionId,
+                    sessionTitle: targetSession?.title || null,
+                    sessionDate: targetSession?.date || null,
+                    sessionLocation: targetSession?.location || null,
                 }
             });
 
             // Optimistic Update
-            setRegistrations(prev => prev.map(r => r.id === editTarget.id ? { ...r, ...editForm, receivedAmount: Number(editForm.receivedAmount) } : r));
+            if (willMoveToAnotherSession) {
+                setRegistrations(prev => prev.filter(r => r.id !== editTarget.id));
+            } else {
+                setRegistrations(prev => prev.map(r => r.id === editTarget.id ? { ...r, ...editForm, receivedAmount: Number(editForm.receivedAmount), sessionId: nextSessionId } : r));
+            }
             setIsEditRegOpen(false);
             setEditTarget(null);
         } catch (err) {
@@ -261,8 +431,13 @@ const SignupAdmin = () => {
 
     const handleDeleteRegistration = async (regId) => {
         if (!confirm('確定要刪除此筆報名資料嗎？此操作無法復原。')) return;
+        if (!isAdmin) return;
         setOpLoading(true);
         try {
+            if (isMockMode) {
+                setRegistrations(prev => prev.filter(r => r.id !== regId));
+                return;
+            }
             const deleteFn = httpsCallable(functions, 'deleteVibeRegistration');
             await deleteFn({  registrationId: regId });
 
@@ -276,8 +451,13 @@ const SignupAdmin = () => {
 
     const handleQuickCancel = async (reg) => {
         if (!confirm(`確定要取消 ${reg.name} 的報名嗎？`)) return;
+        if (!isAdmin) return;
         setOpLoading(true);
         try {
+            if (isMockMode) {
+                setRegistrations(prev => prev.map(r => r.id === reg.id ? { ...r, status: 'cancelled' } : r));
+                return;
+            }
             const updateFn = httpsCallable(functions, 'updateVibeRegistration');
             await updateFn({
                 
@@ -344,7 +524,7 @@ const SignupAdmin = () => {
                                     </svg>
                                 </button>
                             )}
-                            Vibe Coding {viewMode === 'sessions' ? '場次管理' : '報名名單管理'}
+                            AI落地師培訓班 {viewMode === 'sessions' ? '場次管理' : '報名名單管理'}
                         </h1>
                         {adminEmail && (
                             <p className="text-slate-500 text-sm mt-1 flex items-center gap-2">
@@ -353,13 +533,19 @@ const SignupAdmin = () => {
                             </p>
                         )}
                     </div>
-                    {viewMode === 'sessions' && (
+                    {isAdmin && viewMode === 'sessions' && (
                         <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition-colors flex items-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
                             新增場次
                         </button>
                     )}
                 </header>
+
+                {isMockMode && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl mb-6 text-sm">
+                        目前為本地測試模式（`?mock=1`）：免登入、使用假資料，不會呼叫 Firebase Functions。
+                    </div>
+                )}
 
                 {error && <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6">{error}</div>}
 
@@ -384,7 +570,9 @@ const SignupAdmin = () => {
                                 {sessions.length === 0 && (
                                     <div className="col-span-full text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-slate-300">
                                         <p className="text-slate-500 mb-4">目前沒有場次資料</p>
-                                        <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">立即建立場次</button>
+                                        {isAdmin && (
+                                            <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">立即建立場次</button>
+                                        )}
                                     </div>
                                 )}
                                 {sessions.map(session => (
@@ -400,8 +588,15 @@ const SignupAdmin = () => {
                                             <p className="text-slate-500 text-sm mb-3">📍 {session.location}</p>
                                             <p className="text-blue-600 font-bold mb-4 flex items-center gap-1">
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                                                {new Date(session.date).toLocaleDateString()} {new Date(session.date).getHours()}:00
+                                                {new Date(session.date).toLocaleDateString()}{' '}
+                                                {new Date(session.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                                {session.endTime ? `～${session.endTime}` : ''}
                                             </p>
+                                            {session.note && (
+                                                <p className="text-slate-500 text-sm mb-4 line-clamp-2">
+                                                    {session.note}
+                                                </p>
+                                            )}
 
                                             {/* Capacity Bar */}
                                             <div className="mb-4">
@@ -444,12 +639,22 @@ const SignupAdmin = () => {
                                         <div>
                                             <h2 className="text-2xl font-bold text-slate-800 mb-2">{selectedSession.title}</h2>
                                             <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-                                                <div className="flex items-center gap-1"><span className="font-bold text-slate-400">DATE:</span> {new Date(selectedSession.date).toLocaleDateString()} {new Date(selectedSession.date).getHours()}:00</div>
+                                                <div className="flex items-center gap-1">
+                                                    <span className="font-bold text-slate-400">DATE:</span>{' '}
+                                                    {new Date(selectedSession.date).toLocaleDateString()}{' '}
+                                                    {new Date(selectedSession.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                                    {selectedSession.endTime ? `～${selectedSession.endTime}` : ''}
+                                                </div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">LOC:</span> {selectedSession.location}</div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">ADDR:</span> {selectedSession.address}</div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">單價:</span> ${selectedSession.price}</div>
                                                 <div className="flex items-center gap-1 bg-green-50 px-2 py-0.5 rounded border border-green-200"><span className="font-bold text-green-600">總實收:</span> <span className="text-green-700 font-bold">${registrations.filter(r => r.status === 'confirmed').reduce((sum, r) => sum + (r.receivedAmount || 0), 0)}</span></div>
                                             </div>
+                                            {selectedSession.note && (
+                                                <div className="mt-3 text-sm text-slate-600">
+                                                    <span className="font-bold text-slate-400">NOTE:</span> {selectedSession.note}
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="text-right">
                                             <div className="text-xs text-slate-500 uppercase font-bold mb-1">Capacity</div>
@@ -548,15 +753,16 @@ const SignupAdmin = () => {
                 )}
 
                 {/* MODAL: CREATE SESSION */}
-                {isCreateSessionOpen && (
+                {isAdmin && isCreateSessionOpen && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
                         <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 animate-fade-in-up max-h-[90vh] overflow-y-auto">
                             <h3 className="text-xl font-bold text-slate-800 mb-6">新增場次</h3>
                             <form onSubmit={handleCreateSession} className="space-y-4">
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">標題</label><input type="text" value={newSession.title} onChange={e => setNewSession({ ...newSession, title: e.target.value })} className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-3 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">日期</label><input type="date" value={newSession.date} onChange={e => setNewSession({ ...newSession, date: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">時間</label><input type="time" value={newSession.time} onChange={e => setNewSession({ ...newSession, time: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                    <div><label className="text-xs font-bold text-slate-500 uppercase">結束時間</label><input type="time" value={newSession.endTime} onChange={e => setNewSession({ ...newSession, endTime: e.target.value })} className="w-full border p-2 rounded" /></div>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase">地點</label>
@@ -579,6 +785,10 @@ const SignupAdmin = () => {
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">原價</label><input type="number" value={newSession.originalPrice} onChange={e => setNewSession({ ...newSession, originalPrice: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                 </div>
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">名額上限</label><input type="number" value={newSession.maxCapacity} onChange={e => setNewSession({ ...newSession, maxCapacity: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
+                                    <textarea value={newSession.note} onChange={e => setNewSession({ ...newSession, note: e.target.value })} className="w-full border p-2 rounded h-24" placeholder="例如：請攜帶筆電 / 提早 10 分鐘報到"></textarea>
+                                </div>
 
                                 <div className="flex gap-3 mt-8 pt-4 border-t">
                                     <button type="button" onClick={() => setIsCreateSessionOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
@@ -596,9 +806,10 @@ const SignupAdmin = () => {
                             <h3 className="text-xl font-bold text-slate-800 mb-6">編輯場次</h3>
                             <form onSubmit={handleUpdateSession} className="space-y-4">
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">標題</label><input type="text" value={editSessionForm.title} onChange={e => setEditSessionForm({ ...editSessionForm, title: e.target.value })} className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-3 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">日期</label><input type="date" value={editSessionForm.date} onChange={e => setEditSessionForm({ ...editSessionForm, date: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">時間</label><input type="time" value={editSessionForm.time} onChange={e => setEditSessionForm({ ...editSessionForm, time: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                    <div><label className="text-xs font-bold text-slate-500 uppercase">結束時間</label><input type="time" value={editSessionForm.endTime} onChange={e => setEditSessionForm({ ...editSessionForm, endTime: e.target.value })} className="w-full border p-2 rounded" /></div>
                                 </div>
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">地點</label><input type="text" list="locations_edit" value={editSessionForm.location} onChange={handleEditSessionLocationChange} required className="w-full border p-2 rounded" />
                                     <datalist id="locations_edit">
@@ -609,6 +820,10 @@ const SignupAdmin = () => {
                                 <div className="grid grid-cols-2 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">價格</label><input type="number" value={editSessionForm.price} onChange={e => setEditSessionForm({ ...editSessionForm, price: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">名額上限</label><input type="number" value={editSessionForm.maxCapacity} onChange={e => setEditSessionForm({ ...editSessionForm, maxCapacity: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
+                                    <textarea value={editSessionForm.note} onChange={e => setEditSessionForm({ ...editSessionForm, note: e.target.value })} className="w-full border p-2 rounded h-24" placeholder="例如：請攜帶筆電 / 提早 10 分鐘報到"></textarea>
                                 </div>
 
                                 <div className="flex gap-3 mt-8 pt-4 border-t">
@@ -638,6 +853,22 @@ const SignupAdmin = () => {
                                         <option value="confirmed">已確認 (Confirmed)</option>
                                         <option value="cancelled">已取消 (Cancelled)</option>
                                     </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-600 mb-1">場次</label>
+                                    <select
+                                        value={editForm.sessionId}
+                                        onChange={e => setEditForm({ ...editForm, sessionId: e.target.value })}
+                                        className="w-full border p-2 rounded"
+                                    >
+                                        <option value="">請選擇場次</option>
+                                        {sessions.map(s => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.title}｜{new Date(s.date).toLocaleDateString('zh-TW')} {new Date(s.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-slate-500 mt-1">變更場次後，此筆資料會從目前名單移除（請到新場次查看）。</p>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">付款方式</label>

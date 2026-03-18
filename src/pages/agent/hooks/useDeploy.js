@@ -2,7 +2,8 @@ import { useState, useCallback } from 'react';
 import { db } from '../../../firebase';
 import { getDoc, doc } from 'firebase/firestore';
 
-const DEPLOY_URL = 'https://us-central1-lionbaker-vc.cloudfunctions.net/api/deploy';
+// 透過 Firebase Hosting rewrite 走同網域，避免跨網域觸發 CORS
+const DEPLOY_URL = '/api/deploy';
 
 /**
  * 機器人部署至 Cloudflare Edge 邏輯

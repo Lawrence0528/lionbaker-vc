@@ -1,10 +1,34 @@
-const { onRequest } = require("firebase-functions/v2/https");
+const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 const express = require("express");
 const cors = require("cors");
 
 admin.initializeApp();
 const db = admin.firestore();
+
+const ADMIN_EMAIL = "charge0528@gmail.com";
+
+async function assertAdmin(context) {
+    if (!context?.auth?.uid) {
+        throw new HttpsError("unauthenticated", "請先登入管理員帳號。");
+    }
+    const user = await admin.auth().getUser(context.auth.uid);
+    if (user?.email !== ADMIN_EMAIL) {
+        throw new HttpsError("permission-denied", "僅限管理員存取。");
+    }
+    return user;
+}
+
+function toIso(value) {
+    if (!value) return null;
+    if (typeof value === "string") return value;
+    if (value.toDate) return value.toDate().toISOString(); // Firestore Timestamp
+    try {
+        return new Date(value).toISOString();
+    } catch {
+        return null;
+    }
+}
 
 // API App
 const apiApp = express();
@@ -149,7 +173,7 @@ apiApp.post("/api/project/:projectId/storage", verifyProject, async (req, res) =
 
 const axios = require("axios");
 
-apiApp.post('/deploy', async (req, res) => {
+apiApp.post('/api/deploy', async (req, res) => {
     try {
         const { agentId, config } = req.body;
 
@@ -387,6 +411,204 @@ apiApp.post('/deploy', async (req, res) => {
 });
 
 exports.api = onRequest(apiApp);
+
+// -----------------------------
+// AI落地師培訓班 報名系統（Callable Functions）
+// -----------------------------
+
+const VIBE_SESSIONS_COL = "vibe_sessions";
+const VIBE_REGISTRATIONS_COL = "registrations_vibe";
+
+exports.getVibeSessions = onCall(async (request) => {
+    const { data, auth } = request;
+    const isAuthed = !!auth?.uid;
+
+    // 管理員：回傳全部場次（含關閉/額滿）
+    // 一般使用者：只回傳 open 場次
+    let isAdmin = false;
+    if (isAuthed) {
+        try {
+            const u = await admin.auth().getUser(auth.uid);
+            isAdmin = u?.email === ADMIN_EMAIL;
+        } catch {
+            isAdmin = false;
+        }
+    }
+
+    const qs = db.collection(VIBE_SESSIONS_COL);
+    // 注意：Firestore 的 where + orderBy 經常需要 Composite Index。
+    // 一般使用者只需要 open 場次，因此避免在查詢層使用 orderBy（改由程式端排序），
+    // 以免在「未登入 / 無痕」情境下因缺索引導致 500 進而前端抓不到場次。
+    const snap = await (isAdmin
+        ? qs.orderBy("date", "desc").get()
+        : qs.where("status", "==", "open").get()
+    );
+
+    let sessions = snap.docs.map((d) => {
+        const s = d.data() || {};
+        return {
+            ...s,
+            // 注意：舊資料可能在文件內也有存 `id` 欄位，會覆蓋掉文件 ID。
+            // 後台/前台必須以「文件 ID」當作 sessionId 才能正確關聯 registrations_vibe。
+            id: d.id,
+            date: toIso(s.date),
+            endDate: toIso(s.endDate),
+            createdAt: toIso(s.createdAt),
+            updatedAt: toIso(s.updatedAt),
+            // 防呆：確保數字欄位
+            price: typeof s.price === "number" ? s.price : Number(s.price || 0),
+            originalPrice: typeof s.originalPrice === "number" ? s.originalPrice : Number(s.originalPrice || 0),
+            maxCapacity: typeof s.maxCapacity === "number" ? s.maxCapacity : Number(s.maxCapacity || 0),
+            currentCount: typeof s.currentCount === "number" ? s.currentCount : Number(s.currentCount || 0),
+        };
+    });
+
+    // 一般使用者：程式端依日期由近到遠排序（用 toIso 後的字串即可比較）
+    if (!isAdmin) {
+        sessions = sessions
+            .filter((s) => (s.status || "open") === "open")
+            .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    }
+
+    // SignupAdmin 會傳 userId，但我們不依賴它，避免被偽造
+    void data;
+    return { sessions };
+});
+
+exports.createVibeSession = onCall(async (request) => {
+    await assertAdmin(request);
+    const data = request.data || {};
+
+    if (!data.title || !data.date) {
+        throw new HttpsError("invalid-argument", "缺少必要欄位（title、date）。");
+    }
+
+    const payload = {
+        title: String(data.title),
+        date: String(data.date),
+        endDate: data.endDate ? String(data.endDate) : null,
+        endTime: data.endTime ? String(data.endTime) : "",
+        location: data.location ? String(data.location) : "",
+        address: data.address ? String(data.address) : "",
+        note: data.note ? String(data.note) : "",
+        status: data.status ? String(data.status) : "open",
+        price: Number(data.price || 0),
+        originalPrice: Number(data.originalPrice || 0),
+        maxCapacity: Number(data.maxCapacity || 0),
+        currentCount: Number(data.currentCount || 0),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const ref = await db.collection(VIBE_SESSIONS_COL).add(payload);
+    return { id: ref.id };
+});
+
+exports.updateVibeSession = onCall(async (request) => {
+    await assertAdmin(request);
+    const { sessionId, updates } = request.data || {};
+    if (!sessionId || !updates || typeof updates !== "object") {
+        throw new HttpsError("invalid-argument", "缺少 sessionId 或 updates。");
+    }
+
+    const safeUpdates = { ...updates };
+    // 避免外部竄改 server timestamp 欄位
+    delete safeUpdates.createdAt;
+    safeUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    // 常用數字欄位做型別收斂
+    if (safeUpdates.price != null) safeUpdates.price = Number(safeUpdates.price);
+    if (safeUpdates.originalPrice != null) safeUpdates.originalPrice = Number(safeUpdates.originalPrice);
+    if (safeUpdates.maxCapacity != null) safeUpdates.maxCapacity = Number(safeUpdates.maxCapacity);
+    if (safeUpdates.currentCount != null) safeUpdates.currentCount = Number(safeUpdates.currentCount);
+
+    await db.collection(VIBE_SESSIONS_COL).doc(String(sessionId)).set(safeUpdates, { merge: true });
+    return { success: true };
+});
+
+exports.getVibeRegistrations = onCall(async (request) => {
+    await assertAdmin(request);
+    const { sessionId, fallbackToAll } = request.data || {};
+    if (!sessionId) throw new HttpsError("invalid-argument", "缺少 sessionId。");
+
+    const q = db
+        .collection(VIBE_REGISTRATIONS_COL)
+        .where("sessionId", "==", String(sessionId))
+        .orderBy("createdAt", "desc");
+
+    const snap = await q.get().catch(async () => {
+        // 若缺 index，退回不排序（避免整頁掛掉）
+        return await db.collection(VIBE_REGISTRATIONS_COL).where("sessionId", "==", String(sessionId)).get();
+    });
+
+    let registrations = snap.docs.map((d) => {
+        const r = d.data() || {};
+        return {
+            id: d.id,
+            ...r,
+            createdAt: toIso(r.createdAt),
+            updatedAt: toIso(r.updatedAt),
+            count: typeof r.count === "number" ? r.count : Number(r.count || 1),
+            receivedAmount: typeof r.receivedAmount === "number" ? r.receivedAmount : Number(r.receivedAmount || 0),
+        };
+    });
+
+    // 舊資料可能沒有 sessionId，後台會「看得到資料但查不到」。
+    // 當明確指定 fallbackToAll=true 且查不到任何資料時，先回傳最近 N 筆，避免管理頁空白。
+    let mode = "by_session";
+    if (registrations.length === 0 && fallbackToAll === true) {
+        mode = "fallback_all_recent";
+        const limitN = 300;
+        const allSnap = await db
+            .collection(VIBE_REGISTRATIONS_COL)
+            .orderBy("createdAt", "desc")
+            .limit(limitN)
+            .get()
+            .catch(async () => {
+                return await db.collection(VIBE_REGISTRATIONS_COL).limit(limitN).get();
+            });
+
+        registrations = allSnap.docs.map((d) => {
+            const r = d.data() || {};
+            return {
+                id: d.id,
+                ...r,
+                createdAt: toIso(r.createdAt),
+                updatedAt: toIso(r.updatedAt),
+                count: typeof r.count === "number" ? r.count : Number(r.count || 1),
+                receivedAmount: typeof r.receivedAmount === "number" ? r.receivedAmount : Number(r.receivedAmount || 0),
+            };
+        });
+    }
+
+    return { registrations, mode };
+});
+
+exports.updateVibeRegistration = onCall(async (request) => {
+    await assertAdmin(request);
+    const { registrationId, updates } = request.data || {};
+    if (!registrationId || !updates || typeof updates !== "object") {
+        throw new HttpsError("invalid-argument", "缺少 registrationId 或 updates。");
+    }
+
+    const safeUpdates = { ...updates };
+    delete safeUpdates.createdAt;
+    safeUpdates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    if (safeUpdates.count != null) safeUpdates.count = Number(safeUpdates.count);
+    if (safeUpdates.receivedAmount != null) safeUpdates.receivedAmount = Number(safeUpdates.receivedAmount);
+
+    await db.collection(VIBE_REGISTRATIONS_COL).doc(String(registrationId)).set(safeUpdates, { merge: true });
+    return { success: true };
+});
+
+exports.deleteVibeRegistration = onCall(async (request) => {
+    await assertAdmin(request);
+    const { registrationId } = request.data || {};
+    if (!registrationId) throw new HttpsError("invalid-argument", "缺少 registrationId。");
+    await db.collection(VIBE_REGISTRATIONS_COL).doc(String(registrationId)).delete();
+    return { success: true };
+});
 
 exports.renderSandbox = onRequest(async (req, res) => {
     try {

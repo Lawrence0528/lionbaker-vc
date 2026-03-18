@@ -1,6 +1,6 @@
 # 靈感烘焙機 Lion Baker VC
 
-靈感烘焙機為一整合式平台，結合靈感專案管理、LINE Bot 機器人管理、Vibe Coding 報名系統，以及 Firebase 後端服務。主要於 LINE LIFF (WebView) 環境運行，支援行動裝置與 RWD。
+靈感烘焙機為一整合式平台，結合靈感專案管理、LINE Bot 機器人管理、AI落地師培訓班 報名系統，以及 Firebase 後端服務。主要於 LINE LIFF (WebView) 環境運行，支援行動裝置與 RWD。
 
 ---
 
@@ -114,8 +114,8 @@ lionbaker-vc/
 | `/u/:userId/:projectId` | SandboxViewer | 專案沙盒預覽（iframe 顯示 HTML） |
 | `/lineAgent` | LineAgent | LINE Bot 機器人與技能管理 |
 | `/form-responses/:projectId` | FormResponseViewer | 專案表單回應檢視 |
-| `/signup` | Signup | Vibe Coding 學員報名表單 |
-| `/signup/admin` | SignupAdmin | Vibe Coding 報名後台 |
+| `/signup` | Signup | AI落地師培訓班 學員報名表單 |
+| `/signup/admin` | SignupAdmin | AI落地師培訓班 報名後台 |
 
 ---
 
@@ -169,9 +169,9 @@ lionbaker-vc/
 | `src/pages/agent/components/ScriptEditor.jsx` | 腳本編輯器 |
 | `src/pages/agent/hooks/useAgentData.js` | Agent、Skill CRUD、圖片上傳、分享碼 |
 | `src/pages/agent/hooks/useDeploy.js` | 部署至 Cloudflare Workers |
-| `src/pages/singup/Signup.jsx` | Vibe Coding 學員報名表單 |
+| `src/pages/singup/Signup.jsx` | AI落地師培訓班 學員報名表單 |
 | `src/pages/singup/SignupAdmin.jsx` | 報名後台：場次、名單管理 |
-| `src/pages/vibecoding/AdminBackend.jsx` | Vibe Coding 舊版後台 |
+| `src/pages/vibecoding/AdminBackend.jsx` | AI落地師培訓班 舊版後台 |
 | `src/pages/vibecoding/RegistrationForm.jsx` | 舊版報名表單 |
 | `src/pages/SuperAdmin.jsx` | 超級管理員：使用者、授權金鑰管理 |
 | `src/pages/SandboxViewer.jsx` | 專案沙盒預覽（iframe） |
@@ -302,7 +302,7 @@ lionbaker-vc/
 
 | 檔案 | 作用 |
 |------|------|
-| `Signup.jsx` | Vibe Coding 學員報名表單（LIFF 登入、場次選擇、表單送出） |
+| `Signup.jsx` | AI落地師培訓班 學員報名表單（LIFF 登入、場次選擇、表單送出） |
 | `SignupAdmin.jsx` | 報名後台：場次 CRUD、報名名單管理、Google 登入驗證 |
 
 ---
@@ -311,7 +311,7 @@ lionbaker-vc/
 
 | 檔案 | 作用 |
 |------|------|
-| `AdminBackend.jsx` | Vibe Coding 舊版後台（LIFF 版本） |
+| `AdminBackend.jsx` | AI落地師培訓班 舊版後台（LIFF 版本） |
 | `RegistrationForm.jsx` | 舊版報名表單 |
 
 > 此模組為備援或舊版實作，主流程已遷移至 `singup/`。

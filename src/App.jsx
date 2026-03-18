@@ -8,7 +8,7 @@ const SuperAdmin = lazy(() => import('./pages/super-admin'));
 const SandboxViewer = lazy(() => import('./pages/SandboxViewer'));
 const LineAgent = lazy(() => import('./pages/agent'));
 
-// Vibe Coding 報名系統與後台（獨立於主站）
+// AI落地師培訓班 報名系統與後台（獨立於主站）
 const Signup = lazy(() => import('./pages/singup/Signup'));
 const SignupAdmin = lazy(() => import('./pages/singup/SignupAdmin'));
 
