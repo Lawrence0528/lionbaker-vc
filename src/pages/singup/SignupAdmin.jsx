@@ -141,6 +141,21 @@ const SignupAdmin = () => {
         await signOut(auth);
     };
 
+    const buildTimeNotAvailableSession = () => ({
+        id: 'time_not_available',
+        title: '以上場次時間無法配合',
+        date: null,
+        endTime: '',
+        note: '此分類用於彙整「以上場次時間無法配合」的許願開課時間/地點。',
+        location: '-',
+        address: '-',
+        price: 0,
+        originalPrice: 0,
+        maxCapacity: 0,
+        currentCount: 0,
+        status: 'open'
+    });
+
     const fetchSessions = async (userId) => {
         setLoading(true);
         try {
@@ -224,7 +239,7 @@ const SignupAdmin = () => {
             const realActiveCount = regs.filter(r => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0);
 
             // If mismatch with session's stored count, trigger a background update
-            if (session.currentCount !== realActiveCount) {
+            if (session.id !== 'time_not_available' && session.currentCount !== realActiveCount) {
                 console.log(`Syncing capacity for session ${session.id}: DB=${session.currentCount}, Real=${realActiveCount}`);
                 const updateFn = httpsCallable(functions, 'updateVibeSession');
 
@@ -477,6 +492,16 @@ const SignupAdmin = () => {
         return new Date(isoString).toLocaleString('zh-TW');
     };
 
+    const formatSessionDateTime = (session) => {
+        if (!session?.date) return '-';
+        try {
+            const d = new Date(session.date);
+            return `${d.toLocaleDateString('zh-TW')} ${d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}${session.endTime ? `～${session.endTime}` : ''}`;
+        } catch {
+            return '-';
+        }
+    };
+
     // Helper to get unique locations
     const existingLocations = [...new Set(sessions.map(s => s.location).filter(Boolean))];
 
@@ -567,6 +592,38 @@ const SignupAdmin = () => {
                         {/* VIEW MODE: SESSIONS */}
                         {viewMode === 'sessions' && (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {/* Special Card: Time Not Available */}
+                                <div
+                                    key="time_not_available_card"
+                                    className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-all border border-emerald-100 group relative overflow-hidden"
+                                >
+                                    <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full -mr-10 -mt-10 transition-transform group-hover:scale-150"></div>
+                                    <div className="relative">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h3 className="text-xl font-bold text-slate-800">以上場次時間無法配合</h3>
+                                            <div className="text-emerald-700 bg-emerald-50 border border-emerald-200 text-xs font-bold px-2 py-1 rounded">
+                                                許願統計
+                                            </div>
+                                        </div>
+                                        <p className="text-slate-500 text-sm mb-3">彙整學員希望的開課時間與地點</p>
+                                        <p className="text-emerald-700 font-bold mb-4 flex items-center gap-1">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            點進去看填寫內容
+                                        </p>
+
+                                        <div className="flex justify-end items-center text-sm text-slate-500">
+                                            <button
+                                                onClick={() => fetchRegistrations(buildTimeNotAvailableSession())}
+                                                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-4 py-2 rounded-lg transition-colors border border-emerald-200"
+                                            >
+                                                管理 &rarr;
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 {sessions.length === 0 && (
                                     <div className="col-span-full text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-slate-300">
                                         <p className="text-slate-500 mb-4">目前沒有場次資料</p>
@@ -641,9 +698,7 @@ const SignupAdmin = () => {
                                             <div className="flex flex-wrap gap-4 text-sm text-slate-600">
                                                 <div className="flex items-center gap-1">
                                                     <span className="font-bold text-slate-400">DATE:</span>{' '}
-                                                    {new Date(selectedSession.date).toLocaleDateString()}{' '}
-                                                    {new Date(selectedSession.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                                    {selectedSession.endTime ? `～${selectedSession.endTime}` : ''}
+                                                    {formatSessionDateTime(selectedSession)}
                                                 </div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">LOC:</span> {selectedSession.location}</div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">ADDR:</span> {selectedSession.address}</div>
@@ -661,9 +716,9 @@ const SignupAdmin = () => {
                                             <div className="text-3xl font-black text-slate-800">
                                                 {/* Calculate Active Count Client Side for Admin Accuracy */}
                                                 {registrations.filter(r => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0)}
-                                                <span className="text-lg text-slate-400 font-normal">/{selectedSession.maxCapacity || 50}</span>
+                                                <span className="text-lg text-slate-400 font-normal">/{selectedSession.id === 'time_not_available' ? '-' : (selectedSession.maxCapacity || 50)}</span>
                                             </div>
-                                            {(selectedSession.currentCount || 0) >= (selectedSession.maxCapacity || 50) && (
+                                            {selectedSession.id !== 'time_not_available' && (selectedSession.currentCount || 0) >= (selectedSession.maxCapacity || 50) && (
                                                 <div className="text-xs text-red-500 font-bold bg-red-50 px-2 py-1 rounded inline-block mt-1">FULL</div>
                                             )}
                                         </div>
@@ -693,6 +748,13 @@ const SignupAdmin = () => {
                                                             <div className="font-bold text-slate-800">{reg.name}</div>
                                                             <div className="font-mono text-xs text-slate-500">{reg.phone}</div>
                                                             <div className="mt-1 text-xs text-blue-600 bg-blue-50 inline-block px-1 rounded">{reg.source}</div>
+                                                            {(reg.sessionId === 'time_not_available' || reg.isTimeNotAvailable) && (
+                                                                <div className="mt-2 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
+                                                                    <div className="font-bold mb-0.5">許願開課</div>
+                                                                    <div>時間：{reg.wishTime || '-'}</div>
+                                                                    <div>地點：{reg.wishLocation || '-'}</div>
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-4">
                                                             <div className="text-sm font-medium">

@@ -32,7 +32,10 @@ const Signup = () => {
         source: '',
         lastFive: '',
         count: 1,
-        paymentMethod: 'transfer' // 'transfer', 'cash', 'linepay'
+        paymentMethod: 'transfer', // 'transfer', 'cash', 'linepay'
+        isTimeNotAvailable: false,
+        wishTime: '',
+        wishLocation: ''
     });
 
     // UI State for Source Selection
@@ -59,7 +62,7 @@ const Signup = () => {
             el.volume = Math.max(el.volume || 0, 0.8);
             setIsVideoMuted(false);
             // 有些瀏覽器需要使用者互動後才允許播放帶聲音的媒體
-            await el.play().catch(() => {});
+            await el.play().catch(() => { });
         } catch {
             // ignore
         }
@@ -99,12 +102,14 @@ const Signup = () => {
                 const fetchedSessions = result.data.sessions || [];
 
                 if (fetchedSessions.length > 0) {
-                    // Process sessions: format date
+                    // Process sessions: format date with end time
                     const processedManager = fetchedSessions.map(s => {
                         const dateObj = new Date(s.date);
                         const days = ['日', '一', '二', '三', '四', '五', '六'];
                         const dayName = days[dateObj.getDay()];
-                        const formattedDate = `${dateObj.getFullYear()}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')} (${dayName}) ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+                        const startTime = `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+                        const endTime = s.endTime ? `～${s.endTime}` : '';
+                        const formattedDate = `${dateObj.getFullYear()}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')} (${dayName}) ${startTime}${endTime}`;
                         return {
                             ...s,
                             displayDate: formattedDate
@@ -124,7 +129,8 @@ const Signup = () => {
                         {
                             id: 'default_01',
                             date: '2026-02-08T13:00:00',
-                            displayDate: '2026/02/08 (日) 13:00',
+                            endTime: '17:30',
+                            displayDate: '2026/02/08 (日) 13:00～17:30',
                             location: 'TOP SPACE 商務中心',
                             address: '臺中市中區民族路23號3樓',
                             price: 1980,
@@ -143,7 +149,8 @@ const Signup = () => {
                     {
                         id: 'default_01',
                         date: '2026-02-08T13:00:00',
-                        displayDate: '2026/02/08 (日) 13:00',
+                        endTime: '17:30',
+                        displayDate: '2026/02/08 (日) 13:00～17:30',
                         location: 'TOP SPACE 商務中心',
                         address: '臺中市中區民族路23號3樓',
                         price: 1980,
@@ -166,7 +173,18 @@ const Signup = () => {
     };
 
     const handleSessionSelect = (sessionId) => {
-        setSelectedSessionId(sessionId);
+        const nextId = String(sessionId);
+        setSelectedSessionId(nextId);
+        if (nextId !== 'time_not_available') {
+            setFormData(prev => ({
+                ...prev,
+                isTimeNotAvailable: false,
+                wishTime: '',
+                wishLocation: ''
+            }));
+        } else {
+            setFormData(prev => ({ ...prev, isTimeNotAvailable: true }));
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -177,13 +195,25 @@ const Signup = () => {
             setError('請先選擇場次');
             return;
         }
+        if (formData.isTimeNotAvailable) {
+            if (!formData.wishTime.trim()) {
+                setError('請填寫許願開課時間');
+                return;
+            }
+            if (!formData.wishLocation.trim()) {
+                setError('請填寫許願開課地點');
+                return;
+            }
+        }
         if (!formData.source) {
             setError('請填寫來源資訊');
             return;
         }
-        if (formData.paymentMethod === 'transfer' && formData.lastFive.length !== 5) {
-            setError('匯款後五碼必須為 5 碼');
-            return;
+        if (!formData.isTimeNotAvailable) {
+            if (formData.paymentMethod === 'transfer' && formData.lastFive.length !== 5) {
+                setError('匯款後五碼必須為 5 碼');
+                return;
+            }
         }
 
         setLoading(true);
@@ -193,9 +223,9 @@ const Signup = () => {
             // 重要：無論 selectedSession 是否存在，都要寫入 sessionId，避免後台用 where(sessionId==...) 查不到
             const sessionInfo = {
                 sessionId: selectedSessionId,
-                sessionTitle: selectedSession?.title || null,
-                sessionDate: selectedSession?.date || null, // ISO 字串（由場次資料決定）
-                sessionLocation: selectedSession?.location || null,
+                sessionTitle: formData.isTimeNotAvailable ? '以上場次時間無法配合' : (selectedSession?.title || null),
+                sessionDate: formData.isTimeNotAvailable ? null : (selectedSession?.date || null), // ISO 字串（由場次資料決定）
+                sessionLocation: formData.isTimeNotAvailable ? null : (selectedSession?.location || null),
             };
 
             await addDoc(collection(db, 'registrations_vibe'), {
@@ -207,14 +237,22 @@ const Signup = () => {
             });
 
             if (isLiffLoggedIn && liff.isInClient()) {
-                const methodText = formData.paymentMethod === 'transfer' ? `匯款後五碼：${formData.lastFive}` :
-                    formData.paymentMethod === 'cash' ? '付款方式：現金 (現場繳費)' :
-                        '付款方式：LinePay';
+                const methodText = formData.isTimeNotAvailable
+                    ? ''
+                    : (formData.paymentMethod === 'transfer'
+                        ? `\n匯款後五碼：${formData.lastFive}`
+                        : formData.paymentMethod === 'cash'
+                            ? '\n付款方式：現金 (現場繳費)'
+                            : '\n付款方式：LinePay');
+
+                const sessionText = formData.isTimeNotAvailable
+                    ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
+                    : (selectedSession?.displayDate || '2026/02/08');
 
                 await liff.sendMessages([
                     {
                         type: 'text',
-                        text: `【報名成功】\n姓名：${formData.name}\n場次：${selectedSession?.displayDate || '2026/02/08'}\n${methodText}\n\n感謝您的報名，我們已收到您的資訊！`
+                        text: `【報名成功】\n姓名：${formData.name}\n場次：${sessionText}${methodText}\n\n感謝您的報名，我們已收到您的資訊！`
                     }
                 ]);
             }
@@ -265,9 +303,17 @@ const Signup = () => {
                         <button
                             type="button"
                             onClick={() => {
-                                const methodText = formData.paymentMethod === 'transfer' ? `匯款後五碼：${formData.lastFive}` :
-                                    formData.paymentMethod === 'cash' ? '付款方式：現金' : '付款方式：LinePay';
-                                const msg = `【AI落地師培訓班 報名回報】\n姓名：${formData.name}\n場次：${sessions.find(s => s.id === selectedSessionId)?.displayDate}\n${methodText}\n來源：${formData.source}\n\n(系統自動產生)`;
+                                const methodText = formData.isTimeNotAvailable
+                                    ? ''
+                                    : (formData.paymentMethod === 'transfer'
+                                        ? `\n匯款後五碼：${formData.lastFive}`
+                                        : formData.paymentMethod === 'cash'
+                                            ? '\n付款方式：現金'
+                                            : '\n付款方式：LinePay');
+                                const sessionText = formData.isTimeNotAvailable
+                                    ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
+                                    : (sessions.find(s => s.id === selectedSessionId)?.displayDate || '-');
+                                const msg = `【AI落地師培訓班 報名回報】\n姓名：${formData.name}\n場次：${sessionText}${methodText}\n來源：${formData.source}\n\n(系統自動產生)`;
                                 const url = `https://line.me/R/oaMessage/${LINE_OA_ID}/?${encodeURIComponent(msg)}`;
                                 window.location.href = url;
                             }}
@@ -475,7 +521,7 @@ const Signup = () => {
                                 </div>
 
                                 <div className="rounded-2xl bg-white border border-slate-200 p-4">
-                                    <p className="text-sm font-bold text-slate-900">課程亮點（對應舊版海報）</p>
+                                    <p className="text-sm font-bold text-slate-900">課程亮點</p>
                                     <ul className="mt-2 space-y-1.5 text-sm text-slate-600 list-disc list-inside">
                                         <li>落地實現你的想法：不用打一行程式也能做出來</li>
                                         <li>不再「學寫程式」：只要會打字用 LINE，AI 幫你做出工具</li>
@@ -501,7 +547,7 @@ const Signup = () => {
                             </div>
                         </article>
                         <article className="bg-white rounded-3xl shadow-xl border border-slate-200 p-5 sm:p-7 text-left">
-                            <h2 className="text-lg font-bold text-slate-900">課程流程（一天做出成果）</h2>
+                            <h2 className="text-lg font-bold text-slate-900">課程流程</h2>
                             <ol className="mt-4 space-y-3">
                                 {[
                                     { title: '打開大腦｜學習新思維', desc: '2026 年最值錢的不是技術，是你的思維提升，打造不被淘汰的硬實力。' },
@@ -550,90 +596,144 @@ const Signup = () => {
                                         正在載入場次...
                                     </div>
                                 ) : (
-                                <div className="grid grid-cols-1 gap-3">
-                                    {sessions.map(session => {
-                                        const isFull = (session.currentCount || 0) >= (session.maxCapacity || 50);
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {sessions.map(session => {
+                                            const isFull = (session.currentCount || 0) >= (session.maxCapacity || 50);
 
-                                        return (
-                                            <div
-                                                key={session.id}
-                                                role="button"
-                                                tabIndex={0}
-                                                className={`relative border rounded-2xl p-4 cursor-pointer transition-all outline-none ${selectedSessionId === session.id ? 'border-sky-400 bg-sky-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
-                                                onClick={() => handleSessionSelect(session.id)}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter' || e.key === ' ') handleSessionSelect(session.id);
-                                                }}
-                                            >
-                                                <div className="flex justify-between items-center mb-1">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className={`w-2.5 h-2.5 rounded-full ${isFull ? 'bg-amber-500' : selectedSessionId === session.id ? 'bg-sky-500' : 'bg-slate-300'}`}></div>
-                                                        <span className="font-bold text-slate-900 text-base sm:text-lg">{session.displayDate}</span>
+                                            return (
+                                                <div
+                                                    key={session.id}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    className={`relative border rounded-2xl p-4 cursor-pointer transition-all outline-none ${selectedSessionId === session.id ? 'border-sky-400 bg-sky-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                                                    onClick={() => handleSessionSelect(session.id)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' || e.key === ' ') handleSessionSelect(session.id);
+                                                    }}
+                                                >
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className={`w-2.5 h-2.5 rounded-full ${isFull ? 'bg-amber-500' : selectedSessionId === session.id ? 'bg-sky-500' : 'bg-slate-300'}`}></div>
+                                                            <span className="font-bold text-slate-900 text-base sm:text-lg">{session.displayDate}</span>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            {isFull ? (
+                                                                <div className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg border border-amber-200">額滿候補中</div>
+                                                            ) : (
+                                                                selectedSessionId === session.id && <div className="text-xs bg-sky-50 text-sky-700 px-2 py-0.5 rounded-lg border border-sky-200">已選擇</div>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                    <div className="flex gap-2">
-                                                        {isFull ? (
-                                                            <div className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg border border-amber-200">額滿候補中</div>
-                                                        ) : (
-                                                            selectedSessionId === session.id && <div className="text-xs bg-sky-50 text-sky-700 px-2 py-0.5 rounded-lg border border-sky-200">已選擇</div>
+                                                    <div className="pl-5">
+                                                        <div className="text-slate-800 font-semibold mb-1">
+                                                            {session.title || 'AI落地師培訓班'}
+                                                        </div>
+                                                        {!!session.note && (
+                                                            <div className="mb-2 rounded-xl bg-white/70 border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                                                                <span className="whitespace-pre-line">{session.note}</span>
+                                                            </div>
                                                         )}
+                                                        <div className="text-sm text-slate-600 mb-2 flex items-start gap-1">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 mt-0.5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                            </svg>
+                                                            <span>{session.location}<br /><span className="text-xs text-slate-500">{session.address}</span></span>
+                                                        </div>
+                                                        <div className="flex justify-between items-end">
+                                                            <div className="flex items-baseline gap-2">
+                                                                <span className="text-xl font-black text-sky-700">${session.price?.toLocaleString()}</span>
+                                                                {!!session.originalPrice && (
+                                                                    <span className="text-sm text-slate-400 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-xs text-slate-500">
+                                                                {isFull ? (
+                                                                    <span className="text-amber-700 font-semibold">已額滿，您的報名將排入備取</span>
+                                                                ) : (
+                                                                    `名額狀態: 剩餘 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`
+                                                                )}
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <div className="pl-5">
-                                                    <div className="text-slate-800 font-semibold mb-1">
-                                                        {session.title || 'AI落地師培訓班'}
-                                                    </div>
-                                                    {!!session.note && (
-                                                        <div className="mb-2 rounded-xl bg-white/70 border border-slate-200 px-3 py-2 text-sm text-slate-700">
-                                                            <span className="whitespace-pre-line">{session.note}</span>
-                                                        </div>
+                                            );
+                                        })}
+
+                                        {/* Special Option: Time Not Available */}
+                                        <div
+                                            key="time_not_available"
+                                            role="button"
+                                            tabIndex={0}
+                                            className={`relative border rounded-2xl p-4 cursor-pointer transition-all outline-none ${selectedSessionId === 'time_not_available' ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                                            onClick={() => handleSessionSelect('time_not_available')}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') handleSessionSelect('time_not_available');
+                                            }}
+                                        >
+                                            <div className="flex justify-between items-center mb-1">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-2.5 h-2.5 rounded-full ${selectedSessionId === 'time_not_available' ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                                    <span className="font-bold text-slate-900 text-base sm:text-lg">以上場次時間無法配合</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    {selectedSessionId === 'time_not_available' && (
+                                                        <div className="text-xs bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-200">已選擇</div>
                                                     )}
-                                                    <div className="text-sm text-slate-600 mb-2 flex items-start gap-1">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 mt-0.5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                        </svg>
-                                                        <span>{session.location}<br /><span className="text-xs text-slate-500">{session.address}</span></span>
-                                                    </div>
-                                                    <div className="flex justify-between items-end">
-                                                        <div className="flex items-baseline gap-2">
-                                                            <span className="text-xl font-black text-sky-700">${session.price?.toLocaleString()}</span>
-                                                            {!!session.originalPrice && (
-                                                                <span className="text-sm text-slate-400 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>
-                                                            )}
-                                                        </div>
-                                                        <div className="text-xs text-slate-500">
-                                                            {isFull ? (
-                                                                <span className="text-amber-700 font-semibold">已額滿，您的報名將排入備取</span>
-                                                            ) : (
-                                                                `名額狀態: 剩餘 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`
-                                                            )}
-                                                        </div>
-                                                    </div>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
-                                </div>
+                                            <div className="pl-5">
+                                                <div className="text-sm text-slate-600">
+                                                    勾選此項後，請留下你希望的「開課時間 / 地點」，方便我們統計加開場次。
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
 
-                            {/* Payment Method */}
-                            <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                                    付款方式 <span className="text-rose-600">*</span>
-                                </label>
-                                <div className="grid grid-cols-3 gap-2">
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'transfer' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'transfer' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                        轉帳匯款
-                                    </button>
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'cash' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'cash' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                        現金支付
-                                    </button>
-                                    <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'linepay' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'linepay' ? 'bg-[#06c755] border-[#06c755] text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                        LinePay
-                                    </button>
-                                </div>
-                            </div>
+                            {/* Wish Fields (Conditional) */}
+                            {formData.isTimeNotAvailable && (
+                                <section className="bg-emerald-50 rounded-2xl p-5 border border-emerald-200">
+                                    <div className="flex items-center gap-2 mb-3 text-emerald-800 font-bold text-sm tracking-wide">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        許願開課資訊
+                                    </div>
+                                    <div className="flex flex-col gap-4">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                                許願開課時間 <span className="text-rose-600">*</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                name="wishTime"
+                                                value={formData.wishTime}
+                                                onChange={handleChange}
+                                                required={formData.isTimeNotAvailable}
+                                                placeholder="請輸入您可以的日期時間"
+                                                className="w-full px-4 py-3 rounded-xl bg-white border border-emerald-200 text-slate-900 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 outline-none transition-colors"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                                許願開課地點 <span className="text-rose-600">*</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                name="wishLocation"
+                                                value={formData.wishLocation}
+                                                onChange={handleChange}
+                                                required={formData.isTimeNotAvailable}
+                                                placeholder="請輸入您希望的開課地點"
+                                                className="w-full px-4 py-3 rounded-xl bg-white border border-emerald-200 text-slate-900 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 outline-none transition-colors"
+                                            />
+                                        </div>
+                                    </div>
+                                </section>
+                            )}
+
 
                             {/* Name */}
                             <div>
@@ -718,56 +818,76 @@ const Signup = () => {
                                     />
                                 )}
                             </div>
-
-                            {/* Payment Details (Conditional) */}
-                            {formData.paymentMethod === 'transfer' && (
-                                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-3 text-sky-700 font-bold text-sm tracking-wide">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                                        </svg>
-                                        匯款資訊
-                                    </div>
-                                    <div className="space-y-2 text-sm text-slate-700 mb-4">
-                                        <div className="flex justify-between gap-4"><span className="text-slate-500">銀行代碼</span><span className="font-semibold text-slate-900">國泰世華 (013)</span></div>
-                                        <div className="flex justify-between gap-4"><span className="text-slate-500">分行</span><span className="font-semibold text-slate-900">敦化分行</span></div>
-                                        <div className="flex justify-between gap-4"><span className="text-slate-500">戶名</span><span className="font-semibold text-slate-900">焙獅健康顧問有限公司</span></div>
-                                        <div className="mt-2 pt-3 border-t border-slate-200 text-center">
-                                            <span className="block text-xs text-slate-500 mb-1">匯款帳號</span>
-                                            <span className="text-xl font-black text-sky-700 select-all tracking-widest">212035012017</span>
-                                        </div>
-                                    </div>
+                            {/* Payment Method（僅一般報名需要） */}
+                            {!formData.isTimeNotAvailable && (
+                                <>
                                     <div>
                                         <label className="block text-sm font-semibold text-slate-700 mb-2">
-                                            匯款帳號後五碼 <span className="text-rose-600">*</span>
+                                            付款方式 <span className="text-rose-600">*</span>
                                         </label>
-                                        <div className="relative">
-                                            <input
-                                                type="text"
-                                                name="lastFive"
-                                                value={formData.lastFive}
-                                                onChange={handleChange}
-                                                required
-                                                maxLength={5}
-                                                placeholder="XXXXX"
-                                                className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors tracking-[0.5em] text-center text-lg placeholder-slate-300"
-                                            />
-                                            <div className="absolute right-3 top-4 text-xs text-slate-500">{formData.lastFive.length}/5</div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'transfer' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'transfer' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
+                                                轉帳匯款
+                                            </button>
+                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'cash' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'cash' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
+                                                現金支付
+                                            </button>
+                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'linepay' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'linepay' ? 'bg-[#06c755] border-[#06c755] text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
+                                                LinePay
+                                            </button>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-                            {formData.paymentMethod === 'linepay' && (
-                                <div className="bg-sky-50 rounded-2xl p-5 border border-sky-200">
-                                    <h3 className="text-slate-900 font-bold mb-1">LinePay 付款</h3>
-                                    <p className="text-sky-900 text-sm">請於 LinePay 繳費後通知銷帳。</p>
-                                </div>
-                            )}
-                            {formData.paymentMethod === 'cash' && (
-                                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
-                                    <h3 className="text-slate-900 font-bold mb-1">現場繳費</h3>
-                                    <p className="text-slate-700 text-sm">請先繳交費用後通知銷帳。</p>
-                                </div>
+                                    {/* Payment Details (Conditional) */}
+                                    {formData.paymentMethod === 'transfer' && (
+                                        <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                                            <div className="flex items-center gap-2 mb-3 text-sky-700 font-bold text-sm tracking-wide">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                                                </svg>
+                                                匯款資訊
+                                            </div>
+                                            <div className="space-y-2 text-sm text-slate-700 mb-4">
+                                                <div className="flex justify-between gap-4"><span className="text-slate-500">銀行代碼</span><span className="font-semibold text-slate-900">國泰世華 (013)</span></div>
+                                                <div className="flex justify-between gap-4"><span className="text-slate-500">分行</span><span className="font-semibold text-slate-900">敦化分行</span></div>
+                                                <div className="flex justify-between gap-4"><span className="text-slate-500">戶名</span><span className="font-semibold text-slate-900">焙獅健康顧問有限公司</span></div>
+                                                <div className="mt-2 pt-3 border-t border-slate-200 text-center">
+                                                    <span className="block text-xs text-slate-500 mb-1">匯款帳號</span>
+                                                    <span className="text-xl font-black text-sky-700 select-all tracking-widest">212035012017</span>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                                    匯款帳號後五碼 <span className="text-rose-600">*</span>
+                                                </label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="text"
+                                                        name="lastFive"
+                                                        value={formData.lastFive}
+                                                        onChange={handleChange}
+                                                        required
+                                                        maxLength={5}
+                                                        placeholder="XXXXX"
+                                                        className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors tracking-[0.5em] text-center text-lg placeholder-slate-300"
+                                                    />
+                                                    <div className="absolute right-3 top-4 text-xs text-slate-500">{formData.lastFive.length}/5</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {formData.paymentMethod === 'linepay' && (
+                                        <div className="bg-sky-50 rounded-2xl p-5 border border-sky-200">
+                                            <h3 className="text-slate-900 font-bold mb-1">LinePay 付款</h3>
+                                            <p className="text-sky-900 text-sm">請於 LinePay 繳費後通知銷帳。</p>
+                                        </div>
+                                    )}
+                                    {formData.paymentMethod === 'cash' && (
+                                        <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                                            <h3 className="text-slate-900 font-bold mb-1">現場繳費</h3>
+                                            <p className="text-slate-700 text-sm">請先繳交費用後通知銷帳。</p>
+                                        </div>
+                                    )}
+                                </>
                             )}
 
                             {/* Error Msg */}
