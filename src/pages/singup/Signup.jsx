@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -8,10 +8,10 @@ import liff from '@line/liff';
 // Placeholder LIFF ID - User needs to replace this
 const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka'; // e.g., @123xxxxx (Must include @ if using R/oaMessage/ID, usually needs @)
+const BUNNY_VIDEO_EMBED_URL = 'https://player.mediadelivery.net/embed/621248/77e09d16-cfb7-4f70-95bc-b038682b3fcb';
 
 /** AI落地師培訓班 報名系統 - 學員填寫報名表單 */
 const Signup = () => {
-    const videoRef = useRef(null);
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState('');
@@ -43,7 +43,7 @@ const Signup = () => {
     const [customSource, setCustomSource] = useState('');
 
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
-    const seoImage = `${siteOrigin}/signup.png`;
+    const seoImage = `${siteOrigin}/signup.jpg`;
     const seoUrl = `${siteOrigin}/vibe`;
 
     useEffect(() => {
@@ -54,18 +54,9 @@ const Signup = () => {
         }
     }, [sourceOption, customSource]);
 
-    const handleUnmuteVideo = async () => {
-        const el = videoRef.current;
-        if (!el) return;
-        try {
-            el.muted = false;
-            el.volume = Math.max(el.volume || 0, 0.8);
-            setIsVideoMuted(false);
-            // 有些瀏覽器需要使用者互動後才允許播放帶聲音的媒體
-            await el.play().catch(() => { });
-        } catch {
-            // ignore
-        }
+    const handleUnmuteVideo = () => {
+        // 有些瀏覽器需要使用者互動後才允許播放帶聲音的媒體
+        setIsVideoMuted(false);
     };
 
     // Initialize LIFF and Fetch Sessions
@@ -435,7 +426,7 @@ const Signup = () => {
                             <article className="bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 overflow-hidden">
                                 <div className="relative">
                                     <img
-                                        src="/signup.png"
+                                        src="/signup.jpg"
                                         alt="AI落地師培訓班活動海報"
                                         className="w-full h-auto"
                                         loading="lazy"
@@ -458,18 +449,17 @@ const Signup = () => {
                                     </button>
                                 </div>
                                 <div className="mt-4 overflow-hidden rounded-2xl bg-slate-100">
-                                    <video
-                                        ref={videoRef}
-                                        className="w-full h-auto"
-                                        src="/signup.mp4"
-                                        poster="/signup.png"
-                                        autoPlay
-                                        loop
-                                        muted={isVideoMuted}
-                                        controls
-                                        playsInline
-                                        preload="auto"
-                                    />
+                                    {/* 直式 9:16 影片比例：height/width = 16/9 => paddingTop 約 177.78% */}
+                                    <div style={{ position: 'relative', paddingTop: '177.78%' }}>
+                                        <iframe
+                                            src={`${BUNNY_VIDEO_EMBED_URL}?autoplay=true&loop=false&muted=${isVideoMuted ? 'true' : 'false'}&preload=true&responsive=true`}
+                                            loading="lazy"
+                                            style={{ border: 0, position: 'absolute', top: 0, height: '100%', width: '100%' }}
+                                            title="AI落地師培訓班課程介紹"
+                                            allow="accelerometer;gyroscope;autoplay;encrypted-media;picture-in-picture;"
+                                            allowFullScreen
+                                        />
+                                    </div>
                                 </div>
                             </article>
                         </div>
