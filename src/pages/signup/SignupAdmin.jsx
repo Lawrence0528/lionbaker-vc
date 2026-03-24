@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { auth, functions, googleProvider } from '../../firebase';
 import { collection, query, orderBy, getDocs } from 'firebase/firestore'; // Keep getDocs for fallback/dev
 import { httpsCallable } from 'firebase/functions';
@@ -487,6 +487,65 @@ const SignupAdmin = () => {
         }
     };
 
+    const buildCheckInUrl = (registrationId) => {
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
+        return `${origin}/signup/checkin/${registrationId}`;
+    };
+
+    const copyCheckInLink = async (reg) => {
+        if (!reg?.id) {
+            alert('無法產生報到連結：缺少 UID');
+            return;
+        }
+        const url = buildCheckInUrl(reg.id);
+
+        const parseDate = (value) => {
+            if (!value) return null;
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        };
+
+        const formatDateTime = (dateObj) => {
+            if (!dateObj) return '-';
+            return dateObj.toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        };
+
+        const sessionDateObj = parseDate(reg.sessionDate);
+        const checkInDateObj = sessionDateObj ? new Date(sessionDateObj.getTime() - 30 * 60 * 1000) : null;
+        const sessionTimeText = formatDateTime(sessionDateObj);
+        const checkInTimeText = formatDateTime(checkInDateObj).split(' ').pop() || '-';
+        const sessionLocationText = reg.sessionLocation
+            ? `${reg.sessionLocation}（台中市中區民族路 23 號 3 樓）`
+            : 'TOP SPACE 商務中心（台中市中區民族路 23 號 3 樓）';
+
+        const message = [
+            '【AI落地師培訓班｜報到資訊】',
+            `學員：${reg.name || '-'}`,
+            `場次：${reg.sessionTitle || '-'}`,
+            `上課時間：${sessionTimeText}（${checkInTimeText}開放報到）`,
+            `地點：${sessionLocationText}`,
+            `報到連結：${url}`,
+            ...(reg.status === 'pending' ? ['請記得當天帶學費3980元現場繳費'] : []),
+            '',
+            '請於現場出示此頁面 QR 碼完成報到。'
+        ].join('\n');
+
+        try {
+            await navigator.clipboard.writeText(message);
+            alert('報到資訊已複製到剪貼簿');
+        } catch (err) {
+            console.error(err);
+            alert(`複製失敗，請手動複製：${message}`);
+        }
+    };
+
     const formatDate = (isoString) => {
         if (!isoString) return '-';
         return new Date(isoString).toLocaleString('zh-TW');
@@ -510,6 +569,34 @@ const SignupAdmin = () => {
         if (s.location && s.address) acc[s.location] = s.address;
         return acc;
     }, {});
+
+    const sortedRegistrations = useMemo(() => {
+        const statusOrder = {
+            confirmed: 0,
+            pending: 1,
+            cancelled: 2
+        };
+
+        const getTimestamp = (value) => {
+            if (!value) return Number.MAX_SAFE_INTEGER;
+            if (typeof value === 'string') {
+                const parsed = Date.parse(value);
+                return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            }
+            if (typeof value === 'object' && typeof value.toDate === 'function') {
+                return value.toDate().getTime();
+            }
+            return Number.MAX_SAFE_INTEGER;
+        };
+
+        return [...registrations].sort((a, b) => {
+            const aStatusRank = statusOrder[a.status] ?? Number.MAX_SAFE_INTEGER;
+            const bStatusRank = statusOrder[b.status] ?? Number.MAX_SAFE_INTEGER;
+            if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank;
+
+            return getTimestamp(a.createdAt) - getTimestamp(b.createdAt);
+        });
+    }, [registrations]);
 
     const handleNewSessionLocationChange = (e) => {
         const loc = e.target.value;
@@ -678,7 +765,7 @@ const SignupAdmin = () => {
                                                     <span>NT$ {session.price}</span>
                                                 )}
                                                 <button onClick={() => fetchRegistrations(session)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-lg transition-colors">
-                                                    管理 ({session.currentCount || 0}) &rarr;
+                                                    報名管理 ({session.currentCount || 0}) &rarr;
                                                 </button>
                                             </div>
                                         </div>
@@ -739,9 +826,9 @@ const SignupAdmin = () => {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                                                {registrations.length === 0 ? (
+                                                {sortedRegistrations.length === 0 ? (
                                                     <tr><td colSpan="6" className="p-8 text-center text-slate-400">此場次尚無報名資料</td></tr>
-                                                ) : registrations.map(reg => (
+                                                ) : sortedRegistrations.map(reg => (
                                                     <tr key={reg.id} className={`hover:bg-slate-50 transition-colors ${reg.status === 'cancelled' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
                                                         <td className="p-4 text-slate-500 text-xs">{formatDate(reg.createdAt)}</td>
                                                         <td className="p-4">
@@ -787,6 +874,13 @@ const SignupAdmin = () => {
                                                         </td>
                                                         <td className="p-4">
                                                             <div className="flex gap-2">
+                                                                <button
+                                                                    onClick={() => copyCheckInLink(reg)}
+                                                                    className="px-3 py-1 bg-emerald-600 border border-emerald-600 rounded text-xs text-white hover:bg-emerald-700 font-bold"
+                                                                    title="複製報到 QR 頁面連結"
+                                                                >
+                                                                    複製報到資訊
+                                                                </button>
                                                                 <button
                                                                     onClick={() => openEditModal(reg)}
                                                                     className="px-3 py-1 bg-white border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 font-bold"

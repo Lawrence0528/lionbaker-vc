@@ -19,6 +19,12 @@ async function assertAdmin(context) {
     return user;
 }
 
+function assertAuthenticated(context) {
+    if (!context?.auth?.uid) {
+        throw new HttpsError("unauthenticated", "請先登入。");
+    }
+}
+
 function toIso(value) {
     if (!value) return null;
     if (typeof value === "string") return value;
@@ -527,7 +533,7 @@ exports.updateVibeSession = onCall(async (request) => {
 });
 
 exports.getVibeRegistrations = onCall(async (request) => {
-    await assertAdmin(request);
+    assertAuthenticated(request);
     const { sessionId, fallbackToAll } = request.data || {};
     if (!sessionId) throw new HttpsError("invalid-argument", "缺少 sessionId。");
 
@@ -585,7 +591,7 @@ exports.getVibeRegistrations = onCall(async (request) => {
 });
 
 exports.updateVibeRegistration = onCall(async (request) => {
-    await assertAdmin(request);
+    assertAuthenticated(request);
     const { registrationId, updates } = request.data || {};
     if (!registrationId || !updates || typeof updates !== "object") {
         throw new HttpsError("invalid-argument", "缺少 registrationId 或 updates。");

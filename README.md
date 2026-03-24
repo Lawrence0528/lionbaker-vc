@@ -69,7 +69,7 @@ lionbaker-vc/
 │       │       ├── useAgentData.js
 │       │       └── useDeploy.js
 │       │
-│       ├── singup/
+│       ├── signup/
 │       │   ├── Signup.jsx
 │       │   └── SignupAdmin.jsx
 │       │
@@ -169,8 +169,8 @@ lionbaker-vc/
 | `src/pages/agent/components/ScriptEditor.jsx` | 腳本編輯器 |
 | `src/pages/agent/hooks/useAgentData.js` | Agent、Skill CRUD、圖片上傳、分享碼 |
 | `src/pages/agent/hooks/useDeploy.js` | 部署至 Cloudflare Workers |
-| `src/pages/singup/Signup.jsx` | AI落地師培訓班 學員報名表單 |
-| `src/pages/singup/SignupAdmin.jsx` | 報名後台：場次、名單管理 |
+| `src/pages/signup/Signup.jsx` | AI落地師培訓班 學員報名表單 |
+| `src/pages/signup/SignupAdmin.jsx` | 報名後台：場次、名單管理 |
 | `src/pages/vibecoding/AdminBackend.jsx` | AI落地師培訓班 舊版後台 |
 | `src/pages/vibecoding/RegistrationForm.jsx` | 舊版報名表單 |
 | `src/pages/SuperAdmin.jsx` | 超級管理員：使用者、授權金鑰管理 |
@@ -298,7 +298,7 @@ lionbaker-vc/
 
 ---
 
-### Signup 模組 (`src/pages/singup/`)
+### Signup 模組 (`src/pages/signup/`)
 
 | 檔案 | 作用 |
 |------|------|
@@ -314,7 +314,7 @@ lionbaker-vc/
 | `AdminBackend.jsx` | AI落地師培訓班 舊版後台（LIFF 版本） |
 | `RegistrationForm.jsx` | 舊版報名表單 |
 
-> 此模組為備援或舊版實作，主流程已遷移至 `singup/`。
+> 此模組為備援或舊版實作，主流程已遷移至 `signup/`。
 
 ---
 

@@ -9,8 +9,10 @@ const SandboxViewer = lazy(() => import('./pages/SandboxViewer'));
 const LineAgent = lazy(() => import('./pages/agent'));
 
 // AI落地師培訓班 報名系統與後台（獨立於主站）
-const Signup = lazy(() => import('./pages/singup/Signup'));
-const SignupAdmin = lazy(() => import('./pages/singup/SignupAdmin'));
+const Signup = lazy(() => import('./pages/signup/Signup'));
+const SignupAdmin = lazy(() => import('./pages/signup/SignupAdmin'));
+const CheckIn = lazy(() => import('./pages/signup/CheckIn'));
+const CheckInProcess = lazy(() => import('./pages/signup/CheckInProcess'));
 
 function App() {
   return (
@@ -30,6 +32,8 @@ function App() {
           <Route path="/lineAgent" element={<LineAgent />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/signup/admin" element={<SignupAdmin />} />
+          <Route path="/signup/checkin/:uid" element={<CheckIn />} />
+          <Route path="/signup/checkin-process" element={<CheckInProcess />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
