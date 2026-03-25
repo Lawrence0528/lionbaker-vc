@@ -570,6 +570,20 @@ const SignupAdmin = () => {
         return acc;
     }, {});
 
+    const sortedSessions = useMemo(() => {
+        // 依開課日期由近到遠排序（日期近的排前面）
+        return [...sessions].sort((a, b) => {
+            const aTime = a?.date ? new Date(a.date).getTime() : Number.POSITIVE_INFINITY;
+            const bTime = b?.date ? new Date(b.date).getTime() : Number.POSITIVE_INFINITY;
+            const aValid = Number.isFinite(aTime);
+            const bValid = Number.isFinite(bTime);
+            if (!aValid && !bValid) return 0;
+            if (!aValid) return 1;
+            if (!bValid) return -1;
+            return aTime - bTime;
+        });
+    }, [sessions]);
+
     const sortedRegistrations = useMemo(() => {
         const statusOrder = {
             confirmed: 0,
@@ -719,7 +733,7 @@ const SignupAdmin = () => {
                                         )}
                                     </div>
                                 )}
-                                {sessions.map(session => (
+                                {sortedSessions.map(session => (
                                     <div key={session.id} className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-all border border-slate-100 group relative overflow-hidden">
                                         <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full -mr-10 -mt-10 transition-transform group-hover:scale-150"></div>
                                         <div className="relative">
@@ -1018,7 +1032,7 @@ const SignupAdmin = () => {
                                         className="w-full border p-2 rounded"
                                     >
                                         <option value="">請選擇場次</option>
-                                        {sessions.map(s => (
+                                        {sortedSessions.map(s => (
                                             <option key={s.id} value={s.id}>
                                                 {s.title}｜{new Date(s.date).toLocaleDateString('zh-TW')} {new Date(s.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
                                             </option>

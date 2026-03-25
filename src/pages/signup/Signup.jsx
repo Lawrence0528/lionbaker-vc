@@ -106,6 +106,19 @@ const Signup = () => {
                             displayDate: formattedDate
                         };
                     });
+
+                    // 依開課日期由近到遠排序（日期近的排前面）
+                    processedManager.sort((a, b) => {
+                        const aTime = new Date(a.date).getTime();
+                        const bTime = new Date(b.date).getTime();
+                        const aValid = Number.isFinite(aTime);
+                        const bValid = Number.isFinite(bTime);
+                        if (!aValid && !bValid) return 0;
+                        if (!aValid) return 1;
+                        if (!bValid) return -1;
+                        return aTime - bTime;
+                    });
+
                     setSessions(processedManager);
                     // Select the first open session by default
                     const firstOpen = processedManager.find(s => s.status === 'open');
