@@ -546,9 +546,16 @@ const SignupAdmin = () => {
         }
     };
 
-    const formatDate = (isoString) => {
-        if (!isoString) return '-';
-        return new Date(isoString).toLocaleString('zh-TW');
+    const formatDate = (value) => {
+        if (!value) return '-';
+        try {
+            if (typeof value === 'object' && typeof value.toDate === 'function') {
+                return value.toDate().toLocaleString('zh-TW');
+            }
+            return new Date(value).toLocaleString('zh-TW');
+        } catch {
+            return '-';
+        }
     };
 
     const formatSessionDateTime = (session) => {
@@ -793,7 +800,7 @@ const SignupAdmin = () => {
                             <div className="space-y-6 animate-fade-in-up">
                                 {/* Session Info Card */}
                                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                                    <div className="flex justify-between items-start">
+                                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                                         <div>
                                             <h2 className="text-2xl font-bold text-slate-800 mb-2">{selectedSession.title}</h2>
                                             <div className="flex flex-wrap gap-4 text-sm text-slate-600">
@@ -812,7 +819,7 @@ const SignupAdmin = () => {
                                                 </div>
                                             )}
                                         </div>
-                                        <div className="text-right">
+                                        <div className="mt-2 md:mt-0 w-full md:w-auto md:text-right">
                                             <div className="text-xs text-slate-500 uppercase font-bold mb-1">Capacity</div>
                                             <div className="text-3xl font-black text-slate-800">
                                                 {/* Calculate Active Count Client Side for Admin Accuracy */}
@@ -826,8 +833,8 @@ const SignupAdmin = () => {
                                     </div>
                                 </div>
 
-                                <div className="bg-white rounded-xl shadow-lg run-overflow-hidden border border-slate-200">
-                                    <div className="overflow-x-auto">
+                                <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
+                                    <div className="hidden md:block overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
                                             <thead>
                                                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
@@ -916,6 +923,107 @@ const SignupAdmin = () => {
                                             </tbody>
                                         </table>
                                     </div>
+
+                                    {/* 手機版：卡片式清單，避免表格擠壓 */}
+                                    <div className="md:hidden p-4">
+                                        {sortedRegistrations.length === 0 ? (
+                                            <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                                此場次尚無報名資料
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {sortedRegistrations.map(reg => {
+                                                    const paymentLabel = reg.paymentMethod === 'transfer' ? '轉帳'
+                                                        : reg.paymentMethod === 'cash' ? '現金'
+                                                            : reg.paymentMethod === 'linepay' ? 'LinePay'
+                                                                : '未指定';
+                                                    const paymentTail = reg.paymentMethod === 'transfer' && reg.lastFive
+                                                        ? `（末五碼 ${reg.lastFive}）`
+                                                        : '';
+                                                    return (
+                                                    <article
+                                                        key={reg.id}
+                                                        className={`bg-slate-50 border border-slate-200 rounded-xl p-3 ${reg.status === 'cancelled' ? 'opacity-60 grayscale' : ''}`}
+                                                    >
+                                                        <div className="text-[11px] leading-snug text-slate-500">{formatDate(reg.createdAt)}</div>
+                                                        <div className="mt-0.5 flex items-start justify-between gap-2 min-w-0">
+                                                            <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                                                <span className="font-bold text-slate-800 text-sm shrink-0">{reg.name}</span>
+                                                                <span className="font-mono text-[11px] text-slate-500 break-all">{reg.phone}</span>
+                                                            </div>
+                                                            <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+                                                                <span className="text-[10px] leading-tight text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-px rounded whitespace-nowrap">
+                                                                    {reg.source || '—'}
+                                                                </span>
+                                                                <span className={`text-[10px] leading-tight inline-flex items-center px-1.5 py-px rounded font-bold whitespace-nowrap ${reg.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                                                                    reg.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                                                                        'bg-yellow-100 text-yellow-800'
+                                                                    }`}>
+                                                                    {reg.status === 'confirmed' ? '已確認' : reg.status === 'cancelled' ? '已取消' : '待核對'}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        {(reg.sessionId === 'time_not_available' || reg.isTimeNotAvailable) && (
+                                                            <div className="mt-2 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
+                                                                <div className="font-bold mb-0.5">許願開課</div>
+                                                                <div>時間：{reg.wishTime || '-'}</div>
+                                                                <div>地點：{reg.wishLocation || '-'}</div>
+                                                            </div>
+                                                        )}
+
+                                                        <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-800 items-baseline">
+                                                            <span className="min-w-0">
+                                                                <span className="text-slate-500">付款方式</span>：
+                                                                <span className="font-medium">{paymentLabel}{paymentTail}</span>
+                                                            </span>
+                                                            <span className="shrink-0 whitespace-nowrap">
+                                                                <span className="text-slate-500">金額</span>：
+                                                                {reg.status === 'confirmed' ? (
+                                                                    <span className="font-bold text-emerald-600">${reg.receivedAmount}</span>
+                                                                ) : (
+                                                                    <span className="text-slate-400">-</span>
+                                                                )}
+                                                            </span>
+                                                            {reg.adminNote ? (
+                                                                <span className="min-w-0 flex-1 overflow-hidden text-[11px] text-slate-600 text-ellipsis whitespace-nowrap" title={reg.adminNote}>
+                                                                    <span className="text-slate-500">備註</span>：{reg.adminNote}
+                                                                </span>
+                                                            ) : null}
+                                                        </div>
+
+                                                        <div className="mt-2 flex gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => copyCheckInLink(reg)}
+                                                                className="flex-1 min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-bold border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+                                                                title="複製報到 QR 頁面連結"
+                                                            >
+                                                                複製報到
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openEditModal(reg)}
+                                                                className="flex-1 min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 active:bg-slate-100 transition-colors"
+                                                            >
+                                                                編輯
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleDeleteRegistration(reg.id)}
+                                                                className="flex-1 min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors inline-flex items-center justify-center gap-1"
+                                                                title="刪除"
+                                                            >
+                                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                                刪除
+                                                            </button>
+                                                        </div>
+                                                    </article>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -929,7 +1037,7 @@ const SignupAdmin = () => {
                             <h3 className="text-xl font-bold text-slate-800 mb-6">新增場次</h3>
                             <form onSubmit={handleCreateSession} className="space-y-4">
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">標題</label><input type="text" value={newSession.title} onChange={e => setNewSession({ ...newSession, title: e.target.value })} className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">日期</label><input type="date" value={newSession.date} onChange={e => setNewSession({ ...newSession, date: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">時間</label><input type="time" value={newSession.time} onChange={e => setNewSession({ ...newSession, time: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">結束時間</label><input type="time" value={newSession.endTime} onChange={e => setNewSession({ ...newSession, endTime: e.target.value })} className="w-full border p-2 rounded" /></div>
@@ -950,7 +1058,7 @@ const SignupAdmin = () => {
                                     </datalist>
                                 </div>
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">地址</label><input type="text" value={newSession.address} onChange={e => setNewSession({ ...newSession, address: e.target.value })} required className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">價格</label><input type="number" value={newSession.price} onChange={e => setNewSession({ ...newSession, price: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">原價</label><input type="number" value={newSession.originalPrice} onChange={e => setNewSession({ ...newSession, originalPrice: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                 </div>
@@ -976,7 +1084,7 @@ const SignupAdmin = () => {
                             <h3 className="text-xl font-bold text-slate-800 mb-6">編輯場次</h3>
                             <form onSubmit={handleUpdateSession} className="space-y-4">
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">標題</label><input type="text" value={editSessionForm.title} onChange={e => setEditSessionForm({ ...editSessionForm, title: e.target.value })} className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-3 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">日期</label><input type="date" value={editSessionForm.date} onChange={e => setEditSessionForm({ ...editSessionForm, date: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">時間</label><input type="time" value={editSessionForm.time} onChange={e => setEditSessionForm({ ...editSessionForm, time: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">結束時間</label><input type="time" value={editSessionForm.endTime} onChange={e => setEditSessionForm({ ...editSessionForm, endTime: e.target.value })} className="w-full border p-2 rounded" /></div>
@@ -987,7 +1095,7 @@ const SignupAdmin = () => {
                                     </datalist>
                                 </div>
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">地址</label><input type="text" value={editSessionForm.address} onChange={e => setEditSessionForm({ ...editSessionForm, address: e.target.value })} required className="w-full border p-2 rounded" /></div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">價格</label><input type="number" value={editSessionForm.price} onChange={e => setEditSessionForm({ ...editSessionForm, price: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">名額上限</label><input type="number" value={editSessionForm.maxCapacity} onChange={e => setEditSessionForm({ ...editSessionForm, maxCapacity: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                 </div>
