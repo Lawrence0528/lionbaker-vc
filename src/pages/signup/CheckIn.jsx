@@ -90,7 +90,7 @@ const CheckIn = () => {
         });
     };
 
-    const statusText = registration?.status === 'confirmed' ? '已確認' : registration?.status === 'cancelled' ? '已取消' : '待核對';
+    const statusText = registration?.status === 'confirmed' ? '已完成付款' : registration?.status === 'cancelled' ? '已取消' : '未完成付款';
     const statusClass = registration?.status === 'confirmed'
         ? 'text-emerald-300 border-emerald-300/40 bg-emerald-500/10'
         : registration?.status === 'cancelled'
@@ -142,7 +142,7 @@ const CheckIn = () => {
                     <div className="flex flex-col gap-4">
                         <article className="rounded-3xl border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl">
                             <div className="mb-4 flex items-center justify-between">
-                                <span className="text-xs font-bold tracking-[0.2em] text-slate-300">UID PASS</span>
+                                <span className="text-xs font-bold tracking-[0.2em] text-slate-300">AI落地師通行證 AI-PASS</span>
                                 <span className={`rounded-full border px-3 py-1 text-xs font-bold ${statusClass}`}>{statusText}</span>
                             </div>
                             <div className="mx-auto w-fit rounded-2xl border border-white/20 bg-white p-3 shadow-lg shadow-cyan-500/10">
