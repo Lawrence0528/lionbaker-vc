@@ -1,6 +1,6 @@
-# 靈感烘焙機 Lion Baker VC
+# AI落地師武器庫 Lion Baker VC
 
-靈感烘焙機為一整合式平台，結合靈感專案管理、LINE Bot 機器人管理、AI落地師培訓班 報名系統，以及 Firebase 後端服務。主要於 LINE LIFF (WebView) 環境運行，支援行動裝置與 RWD。
+AI落地師武器庫為一整合式平台，結合靈感專案管理、LINE Bot 機器人管理、AI落地師培訓班 報名系統，以及 Firebase 後端服務。主要於 LINE LIFF (WebView) 環境運行，支援行動裝置與 RWD。
 
 ---
 
@@ -109,7 +109,7 @@ lionbaker-vc/
 
 | 路徑 | 頁面 | 說明 |
 |------|------|------|
-| `/` | Home | 靈感烘焙機首頁，專案列表與建立 |
+| `/` | Home | AI落地師武器庫首頁，專案列表與建立 |
 | `/admin` | SuperAdmin | 超級管理員（使用者與授權金鑰管理） |
 | `/u/:userId/:projectId` | SandboxViewer | 專案沙盒預覽（iframe 顯示 HTML） |
 | `/lineAgent` | LineAgent | LINE Bot 機器人與技能管理 |
@@ -134,7 +134,7 @@ lionbaker-vc/
 | `src/components/MatrixRain.jsx` | Matrix 風格背景動畫（Canvas） |
 | `src/utils/clipboard.js` | 跨環境剪貼簿複製（LIFF、iOS 相容） |
 | `src/utils/security.js` | HTML 程式碼安全檢查（阻擋 eval、cookie 等） |
-| `src/pages/home/index.jsx` | 靈感烘焙機主入口：專案列表、建立、編輯、LIFF、Gatekeepers |
+| `src/pages/home/index.jsx` | AI落地師武器庫主入口：專案列表、建立、編輯、LIFF、Gatekeepers |
 | `src/pages/home/constants.js` | 常數（PREMIUM_COLORS 等） |
 | `src/pages/home/components/CreateProjectModal.jsx` | 建立專案彈窗 |
 | `src/pages/home/components/ProjectList.jsx` | 專案列表呈現與操作 |
@@ -228,7 +228,7 @@ lionbaker-vc/
 
 | 檔案 | 作用 |
 |------|------|
-| `index.jsx` | 靈感烘焙機主入口：專案列表、建立、編輯、LINE 機器人管家；整合 LIFF、Gatekeepers |
+| `index.jsx` | AI落地師武器庫主入口：專案列表、建立、編輯、LINE 機器人管家；整合 LIFF、Gatekeepers |
 | `constants.js` | 常數（如 `PREMIUM_COLORS`） |
 
 #### `home/components/`

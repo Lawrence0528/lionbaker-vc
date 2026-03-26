@@ -1,8 +1,8 @@
 /**
  * Home - 系統首頁（原 VibeAdmin）
- * 靈感烘焙機 V1 主要入口，包含專案列表、建立、編輯與 LINE 機器人管家
+ * AI落地師武器庫 V1 主要入口，包含專案列表、建立、編輯
  */
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import liff from '@line/liff';
 import { db, storage, signIn } from '../../firebase';
 import {
@@ -24,11 +24,11 @@ import { PREMIUM_COLORS } from './constants';
 import { TermsModal, SetupAliasScreen, ActivationScreen, BannedScreen } from './components/gatekeepers';
 import CreateProjectModal from './components/CreateProjectModal';
 import ProjectList from './components/ProjectList';
-import ProjectEditor from './components/ProjectEditor';
-import FormResponseViewer from './components/FormResponseViewer';
-import UserSettings from './components/UserSettings';
-import AgentAdmin from '../agent';
-import SuperAdmin from '../super-admin';
+
+const ProjectEditor = lazy(() => import('./components/ProjectEditor'));
+const FormResponseViewer = lazy(() => import('./components/FormResponseViewer'));
+const UserSettings = lazy(() => import('./components/UserSettings'));
+const SuperAdmin = lazy(() => import('../super-admin'));
 
 let liffInitPromise = null;
 
@@ -48,6 +48,13 @@ const Home = () => {
     const [isExpired, setIsExpired] = useState(false);
     const [isBanned, setIsBanned] = useState(false);
     const [showCreateModal, setShowCreateModal] = useState(false);
+
+    const renderChunkFallback = (text = '載入中...') => (
+        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3">
+            <div className="w-10 h-10 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+            <p className="text-slate-500 text-sm">{text}</p>
+        </div>
+    );
 
     const fetchProjects = async (userId) => {
         try {
@@ -198,6 +205,24 @@ const Home = () => {
         init();
     }, []);
 
+    useEffect(() => {
+        if (!userProfile) return;
+        const preloadHeavyViews = () => {
+            import('./components/ProjectEditor');
+            import('./components/FormResponseViewer');
+            import('./components/UserSettings');
+            if (userProfile.role === 'SuperAdmin') import('../super-admin');
+        };
+
+        if (typeof window.requestIdleCallback === 'function') {
+            const idleId = window.requestIdleCallback(preloadHeavyViews, { timeout: 1800 });
+            return () => window.cancelIdleCallback(idleId);
+        }
+
+        const timeoutId = setTimeout(preloadHeavyViews, 1200);
+        return () => clearTimeout(timeoutId);
+    }, [userProfile]);
+
     const handleAgreeTerms = async () => {
         try {
             await updateDoc(doc(db, 'users', userProfile.userId), { agreedToTerms: true });
@@ -344,7 +369,7 @@ const Home = () => {
         <div className="min-h-screen font-sans flex flex-col items-center px-2 py-3 transition-all duration-700 ease-in-out text-slate-700">
             {viewMode !== 'formResponses' && (
                 <div className="flex flex-col sm:flex-row items-center gap-3 mb-6 mt-4">
-                    <h1 className="text-3xl font-bold text-emerald-500 drop-shadow-sm">靈感烘焙機 V1</h1>
+                    <h1 className="text-3xl font-bold text-emerald-500 drop-shadow-sm">AI落地師武器庫 V2</h1>
                 </div>
             )}
 
@@ -393,27 +418,18 @@ const Home = () => {
                             </button>
                         </div>
                     </div>
-                    <div className="w-full max-w-5xl mb-8 px-2">
-                        <div className={`grid ${userProfile?.role === 'SuperAdmin' ? 'grid-cols-3' : 'grid-cols-2'} items-center gap-2 bg-white/50 backdrop-blur-sm p-2 rounded-2xl border border-slate-200/60 shadow-sm`}>
-                            <button
-                                onClick={() => setActiveTab('projects')}
-                                className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
-                                    activeTab === 'projects' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
-                                }`}
-                            >
-                                <span className="text-base shrink-0" aria-hidden>📁</span>
-                                <span className="truncate">專案列表</span>
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('line-bot')}
-                                className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
-                                    activeTab === 'line-bot' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
-                                }`}
-                            >
-                                <span className="text-base shrink-0" aria-hidden>🤖</span>
-                                <span className="truncate">LINE BOT</span>
-                            </button>
-                            {userProfile?.role === 'SuperAdmin' && (
+                    {userProfile?.role === 'SuperAdmin' && (
+                        <div className="w-full max-w-5xl mb-8 px-2">
+                            <div className="grid grid-cols-2 items-center gap-2 bg-white/50 backdrop-blur-sm p-2 rounded-2xl border border-slate-200/60 shadow-sm">
+                                <button
+                                    onClick={() => setActiveTab('projects')}
+                                    className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
+                                        activeTab === 'projects' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'
+                                    }`}
+                                >
+                                    <span className="text-base shrink-0" aria-hidden>📁</span>
+                                    <span className="truncate">專案列表</span>
+                                </button>
                                 <button
                                     onClick={() => setActiveTab('admin')}
                                     className={`inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl font-bold text-sm transition-all duration-300 ${
@@ -423,10 +439,10 @@ const Home = () => {
                                     <span className="text-base shrink-0" aria-hidden>🛡️</span>
                                     <span className="truncate">後台</span>
                                 </button>
-                            )}
+                            </div>
                         </div>
-                    </div>
-                    {activeTab === 'projects' ? (
+                    )}
+                    {activeTab !== 'admin' ? (
                         <>
                             {isExpired && (
                                 <div className="w-full max-w-5xl mb-4 p-3 bg-red-900/10 border border-red-200/50 rounded-xl text-red-500 text-sm flex justify-between items-center backdrop-blur-sm">
@@ -461,13 +477,11 @@ const Home = () => {
                                 userProfile={userProfile}
                             />
                         </>
-                    ) : activeTab === 'admin' ? (
-                        <div className="w-full">
-                            <SuperAdmin />
-                        </div>
                     ) : (
-                        <div className="w-full max-w-5xl">
-                            <AgentAdmin />
+                        <div className="w-full">
+                            <Suspense fallback={renderChunkFallback('正在載入後台...')}>
+                                <SuperAdmin />
+                            </Suspense>
                         </div>
                     )}
                     {showCreateModal && (
@@ -482,24 +496,31 @@ const Home = () => {
             ) : viewMode === 'expire_renew' ? (
                 <ActivationScreen user={userProfile} onRedeem={handleRedeemCode} mode="expire" />
             ) : viewMode === 'formResponses' && currentProject ? (
-                <FormResponseViewer
-                    projectId={currentProject.id}
-                    projectName={currentProject.name}
-                    onBack={() => setViewMode('list')}
-                />
+                <Suspense fallback={renderChunkFallback('正在載入表單回覆...')}>
+                    <FormResponseViewer
+                        projectId={currentProject.id}
+                        projectName={currentProject.name}
+                        formRequirements={currentProject.requirements || ''}
+                        onBack={() => setViewMode('list')}
+                    />
+                </Suspense>
             ) : (
-                <ProjectEditor
-                    project={currentProject}
-                    onSave={() => {
-                        setViewMode('list');
-                        fetchProjects(userProfile.userId);
-                    }}
-                    onBack={() => setViewMode('list')}
-                    userProfile={userProfile}
-                />
+                <Suspense fallback={renderChunkFallback('正在載入編輯器...')}>
+                    <ProjectEditor
+                        project={currentProject}
+                        onSave={() => {
+                            setViewMode('list');
+                            fetchProjects(userProfile.userId);
+                        }}
+                        onBack={() => setViewMode('list')}
+                        userProfile={userProfile}
+                    />
+                </Suspense>
             )}
             {showSettings && userProfile && (
-                <UserSettings user={userProfile} onClose={() => setShowSettings(false)} onUpdate={(updated) => setUserProfile(updated)} />
+                <Suspense fallback={renderChunkFallback('正在載入設定...')}>
+                    <UserSettings user={userProfile} onClose={() => setShowSettings(false)} onUpdate={(updated) => setUserProfile(updated)} />
+                </Suspense>
             )}
         </div>
     );
