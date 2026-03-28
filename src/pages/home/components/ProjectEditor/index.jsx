@@ -336,7 +336,7 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             if (!ctx || !validTypes.includes(ctx.type)) return;
             const userParam = userProfile?.alias || userProfile?.userId;
             const projectParam = commonData.projectAlias || project.id;
-            const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}`;
+            const projectUrl = `https://run.lionbaker.com/u/${userParam}/${projectParam}`;
             await liff.sendMessages([
                 {
                     type: 'flex',
@@ -544,13 +544,13 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             apiInstructions += '\n■ 資料存取規範 (非常重要)\n1. 嚴格禁止載入或使用 Firebase SDK。\n';
             if (isDbEnabled) {
                 apiInstructions += `2. API 支援完整的 CRUD 操作：
-   [新增/更新] POST: fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName', { method: 'POST', body: JSON.stringify({ _id: '...', ...data }) })
-   [取得列表] GET: fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/db/yourCollectionName')
+   [新增/更新] POST: fetch('https://run.lionbaker.com/api/project/' + projectId + '/db/yourCollectionName', { method: 'POST', body: JSON.stringify({ _id: '...', ...data }) })
+   [取得列表] GET: fetch('https://run.lionbaker.com/api/project/' + projectId + '/db/yourCollectionName')
    [修改] PUT: fetch('.../db/collection/docId', { method: 'PUT' })
    [刪除] DELETE: fetch('.../db/collection/docId', { method: 'DELETE' })\n`;
             }
             if (isStorageEnabled) {
-                apiInstructions += `3. 圖片上傳：fetch('https://lionbaker-run.web.app/api/project/' + projectId + '/storage', { method: 'POST', body: JSON.stringify({ fileName, fileBase64, contentType }) })\n`;
+                apiInstructions += `3. 圖片上傳：fetch('https://run.lionbaker.com/api/project/' + projectId + '/storage', { method: 'POST', body: JSON.stringify({ fileName, fileBase64, contentType }) })\n`;
             }
             apiInstructions += `4. projectId 可從 \`document.querySelector('meta[name="x-project-id"]')?.content\` 取得。\n`;
         }
@@ -972,7 +972,7 @@ ${baseInfo}
                                     <div className="p-4 bg-[#f0f0f0] flex-1">
                                         <h4 className="text-white shadow-md shadow-emerald-500/20 font-bold text-sm line-clamp-2 leading-tight mb-2">{ogData.title || '無標題'}</h4>
                                         <p className="text-slate-400 text-xs line-clamp-2 leading-relaxed h-[2.5em]">{ogData.description || '無描述'}</p>
-                                        <div className="mt-3 text-[10px] text-slate-500 uppercase tracking-widest">lionbaker.web.app</div>
+                                        <div className="mt-3 text-[10px] text-slate-500 uppercase tracking-widest">ai.lionbaker.com</div>
                                     </div>
                                 </div>
                             </div>

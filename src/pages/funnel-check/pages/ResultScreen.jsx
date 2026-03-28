@@ -210,20 +210,30 @@ export default function ResultScreen() {
       </header>
 
       <section className="max-w-md mx-auto mt-6 flex flex-col gap-6">
-        <article className="bg-white rounded-2xl shadow-lg border border-slate-200 p-4">
+        <article className="bg-white rounded-2xl shadow-lg border border-slate-200 p-4 flex flex-col gap-3">
           <button
             type="button"
             onClick={() => {
               resetForRetake();
-              navigate('/funnel-check/quiz');
+              navigate('/funnel-check', { replace: true });
             }}
             className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 px-4 rounded-2xl shadow-sm transition-all active:scale-[0.99]"
           >
-            修改評估選項（重新填寫）
+            重新填寫（從基本資料開始）
           </button>
-          <p className="text-xs text-slate-500 mt-2 text-center">
-            會回到第 1 題重新作答，完成後才會重新送出新一份 Flex 報告。
+          <p className="text-xs text-slate-500 text-center leading-relaxed">
+            會回到產業、變現管道與短影音補充欄位；送出後再答題，完成後才會產生新一份報告。
           </p>
+          <button
+            type="button"
+            onClick={() => {
+              resetForRetake();
+              navigate('/funnel-check/quiz', { replace: true });
+            }}
+            className="w-full text-sm font-semibold text-emerald-700 hover:text-emerald-800 py-2 rounded-xl border border-emerald-200 bg-emerald-50/80 transition-colors active:scale-[0.99]"
+          >
+            基本資料不變，直接從第 1 題重答
+          </button>
         </article>
 
         <article

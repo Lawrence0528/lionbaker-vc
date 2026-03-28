@@ -19,7 +19,7 @@ const ProjectCard = ({ project, onEdit, onDelete, onViewFormResponses, userProfi
     const [timestamp] = useState(() => project.updatedAt?.seconds ?? Math.floor(Date.now() / 1000));
     const [copyLinkMsg, setCopyLinkMsg] = useState('');
 
-    const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}?t=${timestamp}`;
+    const projectUrl = `https://run.lionbaker.com/u/${userParam}/${projectParam}?t=${timestamp}`;
 
     const handleCopyLink = async () => {
         try {

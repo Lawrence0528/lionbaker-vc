@@ -8,6 +8,7 @@ import { INDUSTRIES, MONETIZATION_CHANNELS } from '../constants';
 import { FUNNEL_QUIZ_QUESTIONS } from '../utils/funnelQuizData';
 import { computeScoresFromQuestions, pickBottleneck, buildDiagnosisSmart } from '../utils/funnelScore';
 import { useFunnelCheck } from '../context/FunnelCheckContext';
+import { buildReelsInsightPayload, writeFunnelReelsInsight } from '../../../utils/funnelReelsInsight';
 
 const labelByValue = (list, value) => list.find((x) => x.value === value)?.label || '';
 
@@ -43,6 +44,12 @@ export default function ProcessingScreen() {
           monetization:
             labelByValue(MONETIZATION_CHANNELS, state.profileForm.monetization) || state.profileForm.monetization,
           industryDescription: state.profileForm.industryDescription || '',
+          brandName: (state.profileForm.brandName || '').trim(),
+          offerOneLiner: (state.profileForm.offerOneLiner || '').trim(),
+          audiencePortrait: (state.profileForm.audiencePortrait || '').trim(),
+          contentPainOrGoal: (state.profileForm.contentPainOrGoal || '').trim(),
+          personaTone: (state.profileForm.personaTone || '').trim(),
+          shortsPlatforms: Array.isArray(state.profileForm.shortsPlatforms) ? state.profileForm.shortsPlatforms : [],
         };
 
         await setDoc(
@@ -61,7 +68,7 @@ export default function ProcessingScreen() {
           { merge: false },
         );
 
-        finishProcessing({
+        const resultPayload = {
           checkupId,
           profile,
           scores,
@@ -69,7 +76,20 @@ export default function ProcessingScreen() {
           bottleneckScore: showBottleneck ? bottleneck.score : bottleneck.score,
           diagnosisTitle: diagnosis.title,
           strategies: diagnosis.strategies,
-        });
+        };
+
+        finishProcessing(resultPayload);
+
+        writeFunnelReelsInsight(
+          buildReelsInsightPayload({
+            profileForm: state.profileForm,
+            funnelResult: {
+              diagnosisTitle: diagnosis.title,
+              bottleneck,
+              strategies: diagnosis.strategies,
+            },
+          }),
+        );
 
         navigate('/funnel-check/result', { replace: true });
       } catch (err) {

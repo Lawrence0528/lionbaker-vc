@@ -39,6 +39,12 @@ const initialState = {
     industry: '',
     monetization: '',
     industryDescription: '',
+    brandName: '',
+    offerOneLiner: '',
+    audiencePortrait: '',
+    contentPainOrGoal: '',
+    personaTone: '',
+    shortsPlatforms: [],
   },
 
   // { [questionId]: 'A'|'B'|'C' }
@@ -203,18 +209,36 @@ export const FunnelCheckProvider = ({ children }) => {
         const strategies = Array.isArray(latest?.strategies) ? latest.strategies : [];
 
         if (profile && Object.keys(profile).length > 0) {
+          const shortsFromRemote = Array.isArray(profile.shortsPlatforms)
+            ? profile.shortsPlatforms
+            : typeof profile.shortsPlatforms === 'string'
+              ? profile.shortsPlatforms.split(',').map((s) => s.trim()).filter(Boolean)
+              : state.profileForm.shortsPlatforms;
+
           const nextProfile = {
             name: profile.name || state.profileForm.name,
             industry: normalizeSelectValue(INDUSTRIES, profile.industry) || state.profileForm.industry,
             monetization: normalizeSelectValue(MONETIZATION_CHANNELS, profile.monetization) || state.profileForm.monetization,
             industryDescription: profile.industryDescription || state.profileForm.industryDescription,
+            brandName: profile.brandName ?? state.profileForm.brandName,
+            offerOneLiner: profile.offerOneLiner ?? state.profileForm.offerOneLiner,
+            audiencePortrait: profile.audiencePortrait ?? state.profileForm.audiencePortrait,
+            contentPainOrGoal: profile.contentPainOrGoal ?? state.profileForm.contentPainOrGoal,
+            personaTone: profile.personaTone ?? state.profileForm.personaTone,
+            shortsPlatforms: shortsFromRemote?.length ? shortsFromRemote : state.profileForm.shortsPlatforms,
           };
 
           const hasAnyChange =
             nextProfile.name !== state.profileForm.name ||
             nextProfile.industry !== state.profileForm.industry ||
             nextProfile.monetization !== state.profileForm.monetization ||
-            nextProfile.industryDescription !== state.profileForm.industryDescription;
+            nextProfile.industryDescription !== state.profileForm.industryDescription ||
+            nextProfile.brandName !== state.profileForm.brandName ||
+            nextProfile.offerOneLiner !== state.profileForm.offerOneLiner ||
+            nextProfile.audiencePortrait !== state.profileForm.audiencePortrait ||
+            nextProfile.contentPainOrGoal !== state.profileForm.contentPainOrGoal ||
+            nextProfile.personaTone !== state.profileForm.personaTone ||
+            JSON.stringify(nextProfile.shortsPlatforms || []) !== JSON.stringify(state.profileForm.shortsPlatforms || []);
 
           dispatch({
             type: 'SET_PROFILE_FORM',
@@ -237,6 +261,14 @@ export const FunnelCheckProvider = ({ children }) => {
                 industry: normalizeSelectValue(INDUSTRIES, profile?.industry) || state.profileForm.industry,
                 monetization: normalizeSelectValue(MONETIZATION_CHANNELS, profile?.monetization) || state.profileForm.monetization,
                 industryDescription: profile?.industryDescription || state.profileForm.industryDescription,
+                brandName: profile?.brandName ?? state.profileForm.brandName,
+                offerOneLiner: profile?.offerOneLiner ?? state.profileForm.offerOneLiner,
+                audiencePortrait: profile?.audiencePortrait ?? state.profileForm.audiencePortrait,
+                contentPainOrGoal: profile?.contentPainOrGoal ?? state.profileForm.contentPainOrGoal,
+                personaTone: profile?.personaTone ?? state.profileForm.personaTone,
+                shortsPlatforms: Array.isArray(profile?.shortsPlatforms)
+                  ? profile.shortsPlatforms
+                  : state.profileForm.shortsPlatforms,
               },
               scores,
               bottleneck: {

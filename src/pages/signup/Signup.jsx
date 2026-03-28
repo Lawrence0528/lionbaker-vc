@@ -42,7 +42,7 @@ const Signup = () => {
     const [sourceOption, setSourceOption] = useState(''); // '嘉吉老師', 'Rich老師', 'Other'
     const [customSource, setCustomSource] = useState('');
 
-    const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
+    const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
     const seoImage = `${siteOrigin}/signup.jpg`;
     const seoUrl = `${siteOrigin}/vibe`;
 

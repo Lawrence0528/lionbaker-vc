@@ -488,7 +488,7 @@ const SignupAdmin = () => {
     };
 
     const buildCheckInUrl = (registrationId) => {
-        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
         return `${origin}/signup/checkin/${registrationId}`;
     };
 

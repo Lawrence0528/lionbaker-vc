@@ -24,7 +24,7 @@ const ActivationScreen = ({ user, onRedeem, mode = 'activate' }) => {
                 <h2 className="text-2xl font-bold text-slate-900 mb-2">{mode === 'activate' ? '啟用您的帳號' : '請輸入您的金鑰'}</h2>
                 <p className="text-slate-500 mb-6 text-sm">
                     {mode === 'activate'
-                        ? '初次使用請輸入產品序號以啟用服務。'
+                        ? '初次使用請輸入 VIP 序號以啟用服務。'
                         : '請輸入新的序號以啟用或延長服務效期。'}
                 </p>
 

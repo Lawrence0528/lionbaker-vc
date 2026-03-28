@@ -12,6 +12,8 @@ const LineAgent = lazy(() => import('./pages/agent'));
 const SignupApp = lazy(() => import('./pages/signup/SignupApp'));
 // 事業行銷漏斗健檢系統（獨立 SPA）
 const FunnelCheckApp = lazy(() => import('./pages/funnel-check/FunnelCheckApp'));
+// 短影音流量密碼（獨立 LIFF 入口，與首頁分開路由）
+const Reels = lazy(() => import('./pages/reels'));
 
 function App() {
   return (
@@ -31,6 +33,7 @@ function App() {
           <Route path="/lineAgent" element={<LineAgent />} />
           <Route path="/signup/*" element={<SignupApp />} />
           <Route path="/funnel-check/*" element={<FunnelCheckApp />} />
+          <Route path="/reels" element={<Reels />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

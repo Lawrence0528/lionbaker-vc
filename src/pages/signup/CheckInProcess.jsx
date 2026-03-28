@@ -27,7 +27,7 @@ const CheckInProcess = () => {
     const scannerControlsRef = useRef(null);
     const scannerBootTimerRef = useRef(null);
 
-    const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://lionbaker.web.app';
+    const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
     const seoImage = `${siteOrigin}/signup.jpg`;
     const seoUrl = `${siteOrigin}/signup/checkin-process`;
 

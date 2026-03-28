@@ -22,6 +22,26 @@ export const MONETIZATION_CHANNELS = [
   { value: 'other', label: '其他' },
 ];
 
+/** 短影音相關：人設語氣（供健檢表單與 /reels 語境） */
+export const PERSONA_TONE_OPTIONS = [
+  { value: '', label: '不指定（由腳本表單決定）' },
+  { value: '專業可靠、條理分明', label: '專業可靠、條理分明' },
+  { value: '像朋友聊天、好親近', label: '像朋友聊天、好親近' },
+  { value: '幽默有梗、節奏快', label: '幽默有梗、節奏快' },
+  { value: '溫柔療癒、慢節奏', label: '溫柔療癒、慢節奏' },
+  { value: '犀利直白、敢講真話', label: '犀利直白、敢講真話' },
+];
+
+/** 常發短影音的平台（複選） */
+export const SHORTS_PLATFORM_OPTIONS = [
+  { value: 'instagram_reels', label: 'Instagram Reels' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'youtube_shorts', label: 'YouTube Shorts' },
+  { value: 'facebook_reels', label: 'Facebook Reels' },
+  { value: 'line_voom', label: 'LINE VOOM / 限動' },
+  { value: 'other', label: '其他／還在摸索' },
+];
+
 export const DIMENSIONS = [
   { key: 'traffic', label: '流量曝光' },
   { key: 'leadCapture', label: '名單留存' },
