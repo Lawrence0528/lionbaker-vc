@@ -10,6 +10,8 @@ const LineAgent = lazy(() => import('./pages/agent'));
 
 // AI落地師培訓班 報名系統與後台（獨立於主站）
 const SignupApp = lazy(() => import('./pages/signup/SignupApp'));
+// 事業行銷漏斗健檢系統（獨立 SPA）
+const FunnelCheckApp = lazy(() => import('./pages/funnel-check/FunnelCheckApp'));
 
 function App() {
   return (
@@ -28,6 +30,7 @@ function App() {
           <Route path="/u/:userId/:projectId" element={<SandboxViewer />} />
           <Route path="/lineAgent" element={<LineAgent />} />
           <Route path="/signup/*" element={<SignupApp />} />
+          <Route path="/funnel-check/*" element={<FunnelCheckApp />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

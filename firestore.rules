@@ -25,6 +25,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // 漏斗健檢紀錄：以目前專案規則慣例（users/{userId} 的資料文件 ID 為 LINE userId）
+    // 由於 Firebase Auth 與 LINE userId 未綁定，因此僅要求已登入即可建立健檢紀錄。
+    match /users/{userId}/checkups/{checkupId} {
+      allow create, update: if request.auth != null;
+      allow read: if request.auth != null;
+      allow delete: if false;
+    }
+
     match /agents/{agentId} {
       allow read, write: if request.auth != null;
     }

@@ -339,8 +339,103 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             const projectUrl = `https://lionbaker-run.web.app/u/${userParam}/${projectParam}`;
             await liff.sendMessages([
                 {
-                    type: 'text',
-                    text: `✅ 您已成功建立/修改程式碼\n「${commonData.name}」\n${projectUrl}`,
+                    type: 'flex',
+                    altText: `✅ 已完成更新：${commonData.name}`,
+                    contents: {
+                        type: 'bubble',
+                        size: 'mega',
+                        styles: {
+                            header: { backgroundColor: '#0F172A' },
+                            body: { backgroundColor: '#F8FAFC' },
+                            footer: { backgroundColor: '#F8FAFC' },
+                        },
+                        header: {
+                            type: 'box',
+                            layout: 'vertical',
+                            contents: [
+                                {
+                                    type: 'text',
+                                    text: '✅ 程式碼已更新',
+                                    color: '#FFFFFF',
+                                    weight: 'bold',
+                                    size: 'xl',
+                                    align: 'center',
+                                },
+                                {
+                                    type: 'text',
+                                    text: 'Build / Update Completed',
+                                    color: '#94A3B8',
+                                    size: 'xs',
+                                    align: 'center',
+                                    margin: 'sm',
+                                },
+                            ],
+                        },
+                        body: {
+                            type: 'box',
+                            layout: 'vertical',
+                            spacing: 'md',
+                            contents: [
+                                {
+                                    type: 'text',
+                                    text: `「${commonData.name}」`,
+                                    weight: 'bold',
+                                    size: 'lg',
+                                    color: '#0F172A',
+                                    wrap: true,
+                                },
+                                {
+                                    type: 'text',
+                                    text: '作品連結已生成，可直接開啟預覽分享。',
+                                    size: 'sm',
+                                    color: '#475569',
+                                    wrap: true,
+                                },
+                                {
+                                    type: 'box',
+                                    layout: 'vertical',
+                                    backgroundColor: '#EEF2FF',
+                                    borderColor: '#E2E8F0',
+                                    borderWidth: '1px',
+                                    cornerRadius: '12px',
+                                    paddingAll: '12px',
+                                    contents: [
+                                        {
+                                            type: 'text',
+                                            text: projectUrl,
+                                            size: 'xs',
+                                            color: '#1D4ED8',
+                                            wrap: true,
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                        footer: {
+                            type: 'box',
+                            layout: 'vertical',
+                            spacing: 'md',
+                            contents: [
+                                {
+                                    type: 'button',
+                                    style: 'primary',
+                                    color: '#2563EB',
+                                    action: {
+                                        type: 'uri',
+                                        label: '立即開啟作品',
+                                        uri: projectUrl,
+                                    },
+                                },
+                                {
+                                    type: 'text',
+                                    text: 'Powered by LionBaker',
+                                    size: 'xxs',
+                                    color: '#94A3B8',
+                                    align: 'center',
+                                },
+                            ],
+                        },
+                    },
                 },
             ]);
         } catch (err) {
