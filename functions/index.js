@@ -654,8 +654,8 @@ exports.renderSandbox = onRequest(async (req, res) => {
             return res.status(404).send("<h1>找不到專案</h1><p>專案可能已被移除，或尚未生成程式碼。</p>");
         }
 
-        // Setup cache headers for CDN (Fast loading and SEO sharing)
-        res.set('Cache-Control', 'public, max-age=60, s-maxage=60');
+        // 瀏覽器短快取；CDN 邊緣較長（同一網址＋同一 ?t= 才命中）。更新內容請改 ?t= 時間戳 bust。
+        res.set("Cache-Control", "public, max-age=120, s-maxage=600, stale-while-revalidate=86400");
 
         let htmlResponse = projectData.htmlCode;
 
