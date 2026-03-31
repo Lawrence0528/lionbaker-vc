@@ -14,6 +14,8 @@ const SignupApp = lazy(() => import('./pages/signup/SignupApp'));
 const FunnelCheckApp = lazy(() => import('./pages/funnel-check/FunnelCheckApp'));
 // 短影音流量密碼（獨立 LIFF 入口，與首頁分開路由）
 const Reels = lazy(() => import('./pages/reels'));
+// LINE 平板／電腦版用圖片選單（image map）
+const Menu = lazy(() => import('./pages/menu'));
 
 function App() {
   return (
@@ -34,6 +36,7 @@ function App() {
           <Route path="/signup/*" element={<SignupApp />} />
           <Route path="/funnel-check/*" element={<FunnelCheckApp />} />
           <Route path="/reels" element={<Reels />} />
+          <Route path="/menu" element={<Menu />} />
           {/* 預設重新導向 */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
