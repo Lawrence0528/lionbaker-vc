@@ -8,9 +8,9 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // 專案：沙盒 / 預覽需公開讀取；寫入需已通過 Firebase 登入（匿名或 Google）
+    // 專案：避免公開讀取被爬取；公開預覽改走後端 renderSandbox（Admin SDK）輸出 HTML
     match /projects/{projectId} {
-      allow read: if true;
+      allow read: if request.auth != null;
       allow create, update, delete: if request.auth != null;
     }
 

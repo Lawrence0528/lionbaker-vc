@@ -1,14 +1,30 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isAllowedContentType() {
+      // 依實際需求可再加：video/* 會非常吃流量，建議預設禁止
+      return request.resource.contentType.matches('image/.*')
+        || request.resource.contentType == 'application/pdf';
+    }
+
+    function isAllowedSize() {
+      // 預設 5MB 上限（可改 3MB：3 * 1024 * 1024）
+      return request.resource.size < 5 * 1024 * 1024;
+    }
+
     // 專案內嵌頁面可能以公開 URL 載入素材，需允許匿名讀取
     match /project_assets/{projectId}/{allPaths=**} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if request.auth != null
+        && isAllowedSize()
+        && isAllowedContentType();
     }
 
     match /agent_images/{userId}/{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && isAllowedSize()
+        && isAllowedContentType();
     }
 
     match /{allPaths=**} {

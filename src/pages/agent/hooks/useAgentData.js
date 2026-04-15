@@ -212,6 +212,15 @@ export const useAgentData = () => {
     // ========== 圖片上傳 ==========
     const handleImageUpload = useCallback(async (index, file, scripts, setScripts) => {
         if (!file || !userProfile) return;
+        const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+        if (file.size >= MAX_UPLOAD_BYTES) {
+            alert('檔案過大，請上傳 5MB 以內的圖片檔');
+            return;
+        }
+        if (!file.type?.startsWith('image/')) {
+            alert('僅支援上傳圖片檔（image/*）');
+            return;
+        }
         setUploadingImageIndex(index);
         try {
             const fileName = `${Date.now()}_${file.name}`;

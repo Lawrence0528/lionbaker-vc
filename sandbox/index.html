@@ -4,9 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vibe Sandbox</title>
-    <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
-    <link rel="preconnect" href="https://firebase.googleapis.com" />
-    <link rel="dns-prefetch" href="https://firestore.googleapis.com" />
     <style>
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f8fafc; color: #475569; flex-direction: column; }
         .loader { border: 4px solid #e2e8f0; border-top: 4px solid #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 1rem; }
@@ -18,83 +15,32 @@
     <div id="loading" class="loader"></div>
     <div id="status">正在載入應用程式...</div>
 
-    <!-- Firebase App (the core Firebase SDK) is always required and must be listed first -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-        import { getFirestore, doc, getDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-        
-        const firebaseConfig = {
-            apiKey: "AIzaSyALFCoM4kOHcoIZf7QEMwrmHB7fv_HTZSA",
-            authDomain: "lionbaker-vc.firebaseapp.com",
-            projectId: "lionbaker-vc",
-            storageBucket: "lionbaker-vc.firebasestorage.app",
-            messagingSenderId: "993420492969",
-            appId: "1:993420492969:web:d9175c7e110096cee4e9b8"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        async function init() {
+    <script>
+        (function init() {
             try {
-                // Parse URL to get /u/:userId/:projectId
-                // Pathname example: /u/lawrence/my-project
+                // 以同源後端（Firebase Hosting Functions rewrite / Cloudflare 反代）載入 HTML
+                // 避免在 sandbox 入口頁暴露 Firebase Web SDK 與直連 Firestore 的行為。
                 const pathParts = window.location.pathname.split('/').filter(Boolean);
-                
                 if (pathParts.length < 3 || pathParts[0] !== 'u') {
                     throw new Error('無效的專案連結 (格式錯誤)');
                 }
-
                 const userId = pathParts[1];
                 const projectId = pathParts[2];
+                const target = `/u/${encodeURIComponent(userId)}/${encodeURIComponent(projectId)}${window.location.search || ''}`;
 
-                let projectData = null;
-
-                // 1. Try fetching by ID first
-                const docRef = doc(db, 'projects', projectId);
-                const docSnap = await getDoc(docRef);
-
-                if (docSnap.exists()) {
-                    projectData = docSnap.data();
-                } else {
-                    // 2. Fallback to querying by projectAlias
-                    const q = query(
-                        collection(db, 'projects'),
-                        where('projectAlias', '==', projectId)
-                    );
-                    const querySnapshot = await getDocs(q);
-                    
-                    if (!querySnapshot.empty) {
-                        // In case of multiple, just take the first. Ideally, we should also match userId or userAlias.
-                        // Let's find one that matches the userId or userAlias
-                        const docs = querySnapshot.docs.map(d => d.data());
-                        projectData = docs.find(d => d.userId === userId || d.userAlias === userId) || docs[0];
-                    }
-                }
-
-                if (!projectData || !projectData.htmlCode) {
-                    throw new Error('找不到此專案或專案沒有內容');
-                }
-
-                // Render the complete HTML to override current document completely
-                document.open();
-                document.write(projectData.htmlCode);
-                document.close();
-
+                // 用 replace 避免回上一頁又進入 loader 造成 UX 迴圈
+                window.location.replace(target);
             } catch (err) {
-                console.error("載入失敗", err);
+                console.error('載入失敗', err);
                 const loading = document.getElementById('loading');
                 if (loading) loading.style.display = 'none';
-                
                 const status = document.getElementById('status');
                 if (status) {
                     status.className = 'error';
                     status.textContent = err.message || '載入失敗，發生未知的錯誤';
                 }
             }
-        }
-
-        init();
+        })();
     </script>
 </body>
 </html>

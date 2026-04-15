@@ -487,6 +487,73 @@ const SignupAdmin = () => {
         }
     };
 
+    /** 測試後還原：清除報到時間，並重設為待核對／實收 0（報到畫面「已繳費」仍會看實收金額） */
+    const handleClearCheckInInfo = async (reg) => {
+        if (!reg?.id) return;
+        if (!isAdmin) return;
+        const name = reg.name || '此學員';
+        if (
+            !window.confirm(
+                `確定要清除「${name}」的報到與現場收款紀錄？\n\n將移除報到時間、狀態改為「待核對」、實收金額改為 0。備註欄不會自動刪除，若需清理請再按「編輯」。`
+            )
+        ) {
+            return;
+        }
+        setOpLoading(true);
+        try {
+            const updates = {
+                checkInAt: null,
+                status: 'pending',
+                receivedAmount: 0,
+                paymentMethod: '',
+            };
+            if (isMockMode) {
+                setRegistrations((prev) =>
+                    prev.map((r) =>
+                        r.id === reg.id
+                            ? {
+                                  ...r,
+                                  ...updates,
+                              }
+                            : r
+                    )
+                );
+                alert('（本地假資料）已清除報到資訊');
+                return;
+            }
+            const updateFn = httpsCallable(functions, 'updateVibeRegistration');
+            await updateFn({
+                registrationId: reg.id,
+                updates,
+            });
+            setRegistrations((prev) =>
+                prev.map((r) => (r.id === reg.id ? { ...r, ...updates } : r))
+            );
+            alert('已清除報到資訊');
+        } catch (err) {
+            alert('清除失敗: ' + err.message);
+        } finally {
+            setOpLoading(false);
+        }
+    };
+
+    const formatCheckInShort = (value) => {
+        if (!value) return '';
+        try {
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return '';
+            return d.toLocaleString('zh-TW', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            });
+        } catch {
+            return '';
+        }
+    };
+
     const buildCheckInUrl = (registrationId) => {
         const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
         return `${origin}/signup/checkin/${registrationId}`;
@@ -833,6 +900,14 @@ const SignupAdmin = () => {
                                     </div>
                                 </div>
 
+                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                                    <p className="font-bold text-amber-900">報到掃描頁「已繳費」怎麼判斷？</p>
+                                    <p className="mt-1 leading-relaxed">
+                                        只要<strong>狀態為「已確認」</strong>或<strong>實收金額大於 0</strong>，就會顯示已繳費。若在 Firestore
+                                        只把狀態改回待核對、但實收欄位仍大於 0，畫面仍會是已繳費。測試後若要還原，請用名單上的「清除報到資訊」。
+                                    </p>
+                                </div>
+
                                 <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
                                     <div className="hidden md:block overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
@@ -842,7 +917,7 @@ const SignupAdmin = () => {
                                                     <th className="p-4 font-semibold">姓名 / 電話</th>
                                                     <th className="p-4 font-semibold">付款方式</th>
                                                     <th className="p-4 font-semibold">金額 / 備註</th>
-                                                    <th className="p-4 font-semibold">狀態</th>
+                                                    <th className="p-4 font-semibold">狀態 / 報到</th>
                                                     <th className="p-4 font-semibold">操作</th>
                                                 </tr>
                                             </thead>
@@ -892,9 +967,16 @@ const SignupAdmin = () => {
                                                                 }`}>
                                                                 {reg.status === 'confirmed' ? '已確認' : reg.status === 'cancelled' ? '已取消' : '待核對'}
                                                             </span>
+                                                            {reg.checkInAt ? (
+                                                                <div className="mt-1.5 text-[11px] font-medium text-slate-600">
+                                                                    已報到 {formatCheckInShort(reg.checkInAt)}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="mt-1.5 text-[11px] text-slate-400">尚未報到</div>
+                                                            )}
                                                         </td>
                                                         <td className="p-4">
-                                                            <div className="flex gap-2">
+                                                            <div className="flex flex-wrap gap-2">
                                                                 <button
                                                                     onClick={() => copyCheckInLink(reg)}
                                                                     className="px-3 py-1 bg-emerald-600 border border-emerald-600 rounded text-xs text-white hover:bg-emerald-700 font-bold"
@@ -909,8 +991,19 @@ const SignupAdmin = () => {
                                                                     編輯
                                                                 </button>
                                                                 {reg.status !== 'cancelled' && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleClearCheckInInfo(reg)}
+                                                                        disabled={opLoading}
+                                                                        className="px-3 py-1 rounded text-xs font-bold border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                                                                        title="清除報到時間並重設為待核對、實收 0（方便測試還原）"
+                                                                    >
+                                                                        清除報到資訊
+                                                                    </button>
+                                                                )}
+                                                                {reg.status !== 'cancelled' && (
                                                                     <button onClick={() => handleQuickCancel(reg)} className="text-red-400 hover:text-red-600 text-xs underline">
-                                                                        取消
+                                                                        取消報名
                                                                     </button>
                                                                 )}
                                                                 <button onClick={() => handleDeleteRegistration(reg.id)} className="text-slate-400 hover:text-red-600 text-xs" title="刪除">
@@ -992,6 +1085,15 @@ const SignupAdmin = () => {
                                                             ) : null}
                                                         </div>
 
+                                                        <div className="mt-1.5 text-[11px] text-slate-600">
+                                                            <span className="text-slate-500">現場報到</span>：
+                                                            {reg.checkInAt ? (
+                                                                <span className="font-medium text-slate-800">{formatCheckInShort(reg.checkInAt)}</span>
+                                                            ) : (
+                                                                <span className="text-slate-400">尚未</span>
+                                                            )}
+                                                        </div>
+
                                                         <div className="mt-2 flex gap-2">
                                                             <button
                                                                 type="button"
@@ -1018,6 +1120,25 @@ const SignupAdmin = () => {
                                                                 刪除
                                                             </button>
                                                         </div>
+                                                        {reg.status !== 'cancelled' && (
+                                                            <div className="mt-2 flex flex-col gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleClearCheckInInfo(reg)}
+                                                                    disabled={opLoading}
+                                                                    className="w-full min-h-[40px] rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                                                                >
+                                                                    清除報到資訊
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleQuickCancel(reg)}
+                                                                    className="w-full min-h-[36px] text-center text-xs font-bold text-red-500 underline"
+                                                                >
+                                                                    取消報名
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                     </article>
                                                     );
                                                 })}

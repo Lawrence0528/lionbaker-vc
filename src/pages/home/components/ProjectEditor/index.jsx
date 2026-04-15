@@ -263,12 +263,25 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
 
     const handleCommonChange = (e) => setCommonData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
 
+    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+    const isAllowedProjectAsset = (file) => {
+        if (!file) return { ok: false, reason: '未選擇檔案' };
+        if (file.size >= MAX_UPLOAD_BYTES) return { ok: false, reason: '檔案過大，請上傳 5MB 以內的檔案' };
+        if (!file.type?.startsWith('image/')) return { ok: false, reason: '僅支援上傳圖片檔（image/*）' };
+        return { ok: true };
+    };
+
     const handleFilesUpload = async (e) => {
         if (!e.target.files || e.target.files.length === 0) return;
         setUploading(true);
         setStatusMsg('正在上傳圖片...');
         try {
             const files = Array.from(e.target.files);
+            const invalid = files.map(isAllowedProjectAsset).find((r) => !r.ok);
+            if (invalid) {
+                setStatusMsg(`上傳失敗：${invalid.reason}`);
+                return;
+            }
             const newUploads = [];
             for (const file of files) {
                 const storageRef = ref(storage, `project_assets/${project.id}/${Date.now()}_${file.name}`);
@@ -304,6 +317,11 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         setStatusMsg('正在上傳頭像...');
         try {
             const files = Array.from(e.target.files);
+            const invalid = files.map(isAllowedProjectAsset).find((r) => !r.ok);
+            if (invalid) {
+                setStatusMsg(`上傳失敗：${invalid.reason}`);
+                return;
+            }
             const newUploads = [];
             for (const file of files) {
                 const storageRef = ref(storage, `project_assets/${project.id}/${Date.now()}_${file.name}`);
