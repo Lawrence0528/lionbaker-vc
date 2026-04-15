@@ -119,13 +119,17 @@ const Signup = () => {
                         return aTime - bTime;
                     });
 
-                    setSessions(processedManager);
+                    const signupOpenSessions = processedManager.filter((session) => session.isSignupOpen !== false);
+                    setSessions(signupOpenSessions);
                     // Select the first open session by default
-                    const firstOpen = processedManager.find(s => s.status === 'open');
+                    const firstOpen = signupOpenSessions.find(s => s.status === 'open');
                     if (firstOpen) {
                         setSelectedSessionId(firstOpen.id);
-                    } else if (processedManager.length > 0) {
-                        setSelectedSessionId(processedManager[0].id);
+                    } else if (signupOpenSessions.length > 0) {
+                        setSelectedSessionId(signupOpenSessions[0].id);
+                    } else {
+                        setSelectedSessionId('time_not_available');
+                        setSessionsError('目前沒有開放報名場次，可改選「以上場次時間無法配合」留下許願資訊。');
                     }
                 } else {
                     // Fallback if no sessions in DB

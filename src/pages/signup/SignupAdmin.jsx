@@ -34,7 +34,8 @@ const SignupAdmin = () => {
         price: 3980,
         originalPrice: 5000,
         maxCapacity: 20,
-        note: ''
+        note: '',
+        isSignupOpen: true
     });
 
     // Modal State: Edit Session
@@ -51,7 +52,8 @@ const SignupAdmin = () => {
         originalPrice: 0,
         maxCapacity: 50,
         note: '',
-        status: 'open'
+        status: 'open',
+        isSignupOpen: true
     });
 
     // Modal State: Edit Registration
@@ -82,7 +84,8 @@ const SignupAdmin = () => {
                     originalPrice: 5000,
                     maxCapacity: 50,
                     currentCount: 8,
-                    status: 'open'
+                    status: 'open',
+                    isSignupOpen: true
                 },
                 {
                     id: 'mock_session_02',
@@ -96,7 +99,8 @@ const SignupAdmin = () => {
                     originalPrice: 6800,
                     maxCapacity: 30,
                     currentCount: 30,
-                    status: 'open'
+                    status: 'open',
+                    isSignupOpen: true
                 }
             ];
             setAdminEmail('local-dev@mock');
@@ -153,7 +157,8 @@ const SignupAdmin = () => {
         originalPrice: 0,
         maxCapacity: 0,
         currentCount: 0,
-        status: 'open'
+        status: 'open',
+        isSignupOpen: true
     });
 
     const fetchSessions = async (userId) => {
@@ -282,7 +287,8 @@ const SignupAdmin = () => {
                     originalPrice: Number(newSession.originalPrice),
                     maxCapacity: Number(newSession.maxCapacity),
                     currentCount: 0,
-                    status: 'open'
+                    status: 'open',
+                    isSignupOpen: newSession.isSignupOpen !== false
                 };
                 setSessions(prev => [created, ...prev]);
                 setIsCreateSessionOpen(false);
@@ -325,7 +331,8 @@ const SignupAdmin = () => {
             originalPrice: session.originalPrice,
             maxCapacity: session.maxCapacity || 50,
             note: session.note || '',
-            status: session.status || 'open'
+            status: session.status || 'open',
+            isSignupOpen: session.isSignupOpen !== false
         });
         setIsEditSessionOpen(true);
     };
@@ -817,6 +824,17 @@ const SignupAdmin = () => {
                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                 </button>
                                             </div>
+                                            <div className="mb-2">
+                                                {session.isSignupOpen !== false ? (
+                                                    <span className="inline-flex items-center rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-700">
+                                                        開放報名
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center rounded border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
+                                                        關閉報名
+                                                    </span>
+                                                )}
+                                            </div>
                                             <p className="text-slate-500 text-sm mb-3">📍 {session.location}</p>
                                             <p className="text-blue-600 font-bold mb-4 flex items-center gap-1">
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
@@ -1188,6 +1206,15 @@ const SignupAdmin = () => {
                                     <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
                                     <textarea value={newSession.note} onChange={e => setNewSession({ ...newSession, note: e.target.value })} className="w-full border p-2 rounded h-24" placeholder="例如：請攜帶筆電 / 提早 10 分鐘報到"></textarea>
                                 </div>
+                                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={newSession.isSignupOpen !== false}
+                                        onChange={e => setNewSession({ ...newSession, isSignupOpen: e.target.checked })}
+                                        className="h-4 w-4"
+                                    />
+                                    <span className="text-sm font-semibold text-slate-700">開放報名</span>
+                                </label>
 
                                 <div className="flex gap-3 mt-8 pt-4 border-t">
                                     <button type="button" onClick={() => setIsCreateSessionOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
@@ -1224,6 +1251,15 @@ const SignupAdmin = () => {
                                     <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
                                     <textarea value={editSessionForm.note} onChange={e => setEditSessionForm({ ...editSessionForm, note: e.target.value })} className="w-full border p-2 rounded h-24" placeholder="例如：請攜帶筆電 / 提早 10 分鐘報到"></textarea>
                                 </div>
+                                <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={editSessionForm.isSignupOpen !== false}
+                                        onChange={e => setEditSessionForm({ ...editSessionForm, isSignupOpen: e.target.checked })}
+                                        className="h-4 w-4"
+                                    />
+                                    <span className="text-sm font-semibold text-slate-700">開放報名</span>
+                                </label>
 
                                 <div className="flex gap-3 mt-8 pt-4 border-t">
                                     <button type="button" onClick={() => setIsEditSessionOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>

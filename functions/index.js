@@ -472,7 +472,7 @@ exports.getVibeSessions = onCall(async (request) => {
     // 一般使用者：程式端依日期由近到遠排序（用 toIso 後的字串即可比較）
     if (!isAdmin) {
         sessions = sessions
-            .filter((s) => (s.status || "open") === "open")
+            .filter((s) => (s.status || "open") === "open" && s.isSignupOpen !== false)
             .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
     }
 
@@ -498,6 +498,7 @@ exports.createVibeSession = onCall(async (request) => {
         address: data.address ? String(data.address) : "",
         note: data.note ? String(data.note) : "",
         status: data.status ? String(data.status) : "open",
+        isSignupOpen: data.isSignupOpen !== false,
         price: Number(data.price || 0),
         originalPrice: Number(data.originalPrice || 0),
         maxCapacity: Number(data.maxCapacity || 0),
@@ -527,6 +528,7 @@ exports.updateVibeSession = onCall(async (request) => {
     if (safeUpdates.originalPrice != null) safeUpdates.originalPrice = Number(safeUpdates.originalPrice);
     if (safeUpdates.maxCapacity != null) safeUpdates.maxCapacity = Number(safeUpdates.maxCapacity);
     if (safeUpdates.currentCount != null) safeUpdates.currentCount = Number(safeUpdates.currentCount);
+    if (safeUpdates.isSignupOpen != null) safeUpdates.isSignupOpen = safeUpdates.isSignupOpen !== false;
 
     await db.collection(VIBE_SESSIONS_COL).doc(String(sessionId)).set(safeUpdates, { merge: true });
     return { success: true };
