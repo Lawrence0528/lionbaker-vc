@@ -10,6 +10,16 @@ const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka'; // e.g., @123xxxxx (Must include @ if using R/oaMessage/ID, usually needs @)
 const BUNNY_VIDEO_EMBED_URL = 'https://player.mediadelivery.net/embed/621248/77e09d16-cfb7-4f70-95bc-b038682b3fcb';
 
+/** 台灣手機：09 開頭、僅 10 碼數字（不接受符號或連字號） */
+const isValidTaiwanMobileDigits = (phone) => /^09\d{8}$/.test(String(phone).trim());
+
+/** 基本 Email 格式（RFC 子集，足夠阻擋明顯錯誤） */
+const isValidEmailFormat = (email) => {
+    const s = String(email).trim();
+    if (!s) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+};
+
 /** AI落地師培訓班 報名系統 - 學員填寫報名表單 */
 const Signup = () => {
     const [loading, setLoading] = useState(false);
@@ -32,7 +42,7 @@ const Signup = () => {
         source: '',
         lastFive: '',
         count: 1,
-        paymentMethod: 'transfer', // 'transfer', 'cash', 'linepay'
+        paymentMethod: 'transfer',
         isTimeNotAvailable: false,
         wishTime: '',
         wishLocation: ''
@@ -180,6 +190,12 @@ const Signup = () => {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    /** 手機僅允許數字、最多 10 碼，避免輸入 - 或符號 */
+    const handlePhoneChange = (e) => {
+        const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+        setFormData(prev => ({ ...prev, phone: digits }));
+    };
+
     const handleSessionSelect = (sessionId) => {
         const nextId = String(sessionId);
         setSelectedSessionId(nextId);
@@ -217,8 +233,16 @@ const Signup = () => {
             setError('請填寫來源資訊');
             return;
         }
+        if (!isValidTaiwanMobileDigits(formData.phone)) {
+            setError('手機號碼須為 09 開頭的 10 碼數字，請勿輸入連字號或符號。');
+            return;
+        }
+        if (!isValidEmailFormat(formData.email)) {
+            setError('請填寫有效的 Email。');
+            return;
+        }
         if (!formData.isTimeNotAvailable) {
-            if (formData.paymentMethod === 'transfer' && formData.lastFive.length !== 5) {
+            if (formData.lastFive.length !== 5) {
                 setError('匯款後五碼必須為 5 碼');
                 return;
             }
@@ -238,6 +262,7 @@ const Signup = () => {
 
             await addDoc(collection(db, 'registrations_vibe'), {
                 ...formData,
+                email: formData.email.trim(),
                 ...sessionInfo,
                 lineUserId: lineProfile?.userId || null,
                 createdAt: serverTimestamp(),
@@ -247,11 +272,7 @@ const Signup = () => {
             if (isLiffLoggedIn && liff.isInClient()) {
                 const methodText = formData.isTimeNotAvailable
                     ? ''
-                    : (formData.paymentMethod === 'transfer'
-                        ? `\n匯款後五碼：${formData.lastFive}`
-                        : formData.paymentMethod === 'cash'
-                            ? '\n付款方式：現金 (現場繳費)'
-                            : '\n付款方式：LinePay');
+                    : `\n匯款後五碼：${formData.lastFive}`;
 
                 const sessionText = formData.isTimeNotAvailable
                     ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
@@ -313,11 +334,7 @@ const Signup = () => {
                             onClick={() => {
                                 const methodText = formData.isTimeNotAvailable
                                     ? ''
-                                    : (formData.paymentMethod === 'transfer'
-                                        ? `\n匯款後五碼：${formData.lastFive}`
-                                        : formData.paymentMethod === 'cash'
-                                            ? '\n付款方式：現金'
-                                            : '\n付款方式：LinePay');
+                                    : `\n匯款後五碼：${formData.lastFive}`;
                                 const sessionText = formData.isTimeNotAvailable
                                     ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
                                     : (sessions.find(s => s.id === selectedSessionId)?.displayDate || '-');
@@ -767,22 +784,29 @@ const Signup = () => {
                                     type="tel"
                                     name="phone"
                                     value={formData.phone}
-                                    onChange={handleChange}
+                                    onChange={handlePhoneChange}
                                     required
-                                    placeholder="0912-345-678"
+                                    inputMode="numeric"
+                                    autoComplete="tel-national"
+                                    placeholder="0912345678（僅 10 碼數字）"
+                                    maxLength={10}
                                     className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
                                 />
                             </div>
 
-                            {/* Email (Optional) */}
+                            {/* Email */}
                             <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-1">Email（選填）</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                    Email <span className="text-rose-600">*</span>
+                                </label>
                                 <input
                                     type="email"
                                     name="email"
                                     value={formData.email}
                                     onChange={handleChange}
+                                    required
                                     placeholder="name@example.com"
+                                    autoComplete="email"
                                     className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none transition-colors"
                                 />
                             </div>
@@ -832,21 +856,11 @@ const Signup = () => {
                                         <label className="block text-sm font-semibold text-slate-700 mb-2">
                                             付款方式 <span className="text-rose-600">*</span>
                                         </label>
-                                        <div className="grid grid-cols-3 gap-2">
-                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'transfer' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'transfer' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                                轉帳匯款
-                                            </button>
-                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'cash' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'cash' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                                現金支付
-                                            </button>
-                                            <button type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: 'linepay' }))} className={`p-3 rounded-xl border text-sm font-semibold transition-all ${formData.paymentMethod === 'linepay' ? 'bg-[#06c755] border-[#06c755] text-white' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
-                                                LinePay
-                                            </button>
+                                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-center text-sm font-semibold text-sky-900">
+                                            轉帳匯款
                                         </div>
                                     </div>
-                                    {/* Payment Details (Conditional) */}
-                                    {formData.paymentMethod === 'transfer' && (
-                                        <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                                    <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
                                             <div className="flex items-center gap-2 mb-3 text-sky-700 font-bold text-sm tracking-wide">
                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -880,20 +894,7 @@ const Signup = () => {
                                                     <div className="absolute right-3 top-4 text-xs text-slate-500">{formData.lastFive.length}/5</div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    )}
-                                    {formData.paymentMethod === 'linepay' && (
-                                        <div className="bg-sky-50 rounded-2xl p-5 border border-sky-200">
-                                            <h3 className="text-slate-900 font-bold mb-1">LinePay 付款</h3>
-                                            <p className="text-sky-900 text-sm">請於 LinePay 繳費後通知銷帳。</p>
-                                        </div>
-                                    )}
-                                    {formData.paymentMethod === 'cash' && (
-                                        <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
-                                            <h3 className="text-slate-900 font-bold mb-1">現場繳費</h3>
-                                            <p className="text-slate-700 text-sm">請先繳交費用後通知銷帳。</p>
-                                        </div>
-                                    )}
+                                    </div>
                                 </>
                             )}
 

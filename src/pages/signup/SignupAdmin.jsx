@@ -693,6 +693,92 @@ const SignupAdmin = () => {
         });
     }, [registrations]);
 
+    const paymentMethodToLabel = (pm) => {
+        if (pm === 'transfer') return '轉帳';
+        if (pm === 'cash') return '現金';
+        if (pm === 'linepay') return 'LinePay';
+        return '未指定';
+    };
+
+    const statusToLabel = (status) => {
+        if (status === 'confirmed') return '已確認';
+        if (status === 'cancelled') return '已取消';
+        return '待核對';
+    };
+
+    const escapeCsvCell = (value) => {
+        const s = value === null || value === undefined ? '' : String(value);
+        if (/[",\r\n]/.test(s)) {
+            return `"${s.replace(/"/g, '""')}"`;
+        }
+        return s;
+    };
+
+    const sanitizeFilenameSegment = (raw) => (raw || 'export').replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+    const handleExportRegistrationsCsv = () => {
+        if (!selectedSession) return;
+        if (sortedRegistrations.length === 0) {
+            alert('目前沒有可匯出的報名資料');
+            return;
+        }
+
+        const headers = [
+            '場次名稱',
+            '報名時間',
+            '姓名',
+            '電話',
+            '來源',
+            '付款方式',
+            '轉帳末五碼',
+            '人數',
+            '實收金額',
+            '狀態',
+            '管理備註',
+            '報到時間',
+            '許願時間',
+            '許願地點',
+            '報名編號',
+            '報到連結'
+        ];
+
+        const rows = sortedRegistrations.map((reg) => {
+            const checkInUrl = reg.id ? buildCheckInUrl(reg.id) : '';
+            return [
+                selectedSession.title || '',
+                formatDate(reg.createdAt),
+                reg.name || '',
+                reg.phone || '',
+                reg.source || '',
+                paymentMethodToLabel(reg.paymentMethod),
+                reg.lastFive || '',
+                reg.count ?? 1,
+                reg.receivedAmount ?? '',
+                statusToLabel(reg.status),
+                reg.adminNote || '',
+                reg.checkInAt ? formatDate(reg.checkInAt) : '',
+                reg.wishTime || '',
+                reg.wishLocation || '',
+                reg.id || '',
+                checkInUrl
+            ];
+        });
+
+        const csvBody = [headers, ...rows].map((line) => line.map(escapeCsvCell).join(',')).join('\r\n');
+        const csvContent = `\uFEFF${csvBody}`;
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        a.href = url;
+        a.download = `報名名單_${sanitizeFilenameSegment(selectedSession.title)}_${stamp}.csv`;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     const handleNewSessionLocationChange = (e) => {
         const loc = e.target.value;
         // Only auto-fill if we have a known address for this EXACT location name
@@ -927,6 +1013,19 @@ const SignupAdmin = () => {
                                 </div>
 
                                 <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 px-4 py-3 border-b border-slate-200 bg-slate-50">
+                                        <button
+                                            type="button"
+                                            onClick={handleExportRegistrationsCsv}
+                                            disabled={sortedRegistrations.length === 0}
+                                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                            </svg>
+                                            匯出 CSV
+                                        </button>
+                                    </div>
                                     <div className="hidden md:block overflow-x-auto">
                                         <table className="w-full text-left border-collapse">
                                             <thead>
