@@ -6,6 +6,26 @@ import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
 
+const REFRESHER_FEE = 500;
+const DEFAULT_REFRESHER_MAX = 10;
+const PAYEE_OPTIONS = ['', '嘉吉', '偉志', '白白'];
+
+/** 複訓名單「前次報名場次」欄（與報名寫入之 title / 日期 對齊） */
+const getRefresherPreviousSessionText = (reg) => {
+    if (!reg) return '—';
+    const t = (reg.previousSessionTitle || '').trim();
+    if (t) return t;
+    if (reg.previousSessionDate) {
+        const d = new Date(reg.previousSessionDate);
+        if (!Number.isNaN(d.getTime())) {
+            const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+            return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}（${wk}）`;
+        }
+        return String(reg.previousSessionDate);
+    }
+    return '—';
+};
+
 const SignupAdmin = () => {
     const isDev = import.meta?.env?.DEV;
     const isMockMode = isDev && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mock') === '1';
@@ -16,6 +36,8 @@ const SignupAdmin = () => {
     const [sessions, setSessions] = useState([]);
     const [registrations, setRegistrations] = useState([]);
     const [selectedSession, setSelectedSession] = useState(null);
+    /** 報名名單：正課 main / 複訓 refresher（僅有場次之場次） */
+    const [registrationListTab, setRegistrationListTab] = useState('main');
 
     // UI State
     const [loading, setLoading] = useState(true);
@@ -35,7 +57,8 @@ const SignupAdmin = () => {
         originalPrice: 5000,
         maxCapacity: 20,
         note: '',
-        isSignupOpen: true
+        isSignupOpen: true,
+        refresherMaxCapacity: DEFAULT_REFRESHER_MAX
     });
 
     // Modal State: Edit Session
@@ -53,7 +76,8 @@ const SignupAdmin = () => {
         maxCapacity: 50,
         note: '',
         status: 'open',
-        isSignupOpen: true
+        isSignupOpen: true,
+        refresherMaxCapacity: DEFAULT_REFRESHER_MAX
     });
 
     // Modal State: Edit Registration
@@ -64,7 +88,8 @@ const SignupAdmin = () => {
         paymentMethod: '',
         receivedAmount: 0,
         adminNote: '',
-        sessionId: ''
+        sessionId: '',
+        payee: ''
     });
 
     useEffect(() => {
@@ -83,7 +108,9 @@ const SignupAdmin = () => {
                     price: 1980,
                     originalPrice: 5000,
                     maxCapacity: 50,
-                    currentCount: 8,
+                    currentCount: 2,
+                    refresherMaxCapacity: DEFAULT_REFRESHER_MAX,
+                    refresherCurrentCount: 1,
                     status: 'open',
                     isSignupOpen: true
                 },
@@ -99,6 +126,8 @@ const SignupAdmin = () => {
                     originalPrice: 6800,
                     maxCapacity: 30,
                     currentCount: 30,
+                    refresherMaxCapacity: DEFAULT_REFRESHER_MAX,
+                    refresherCurrentCount: 0,
                     status: 'open',
                     isSignupOpen: true
                 }
@@ -186,6 +215,7 @@ const SignupAdmin = () => {
         setLoading(true);
         setSelectedSession(session);
         setViewMode('registrations');
+        setRegistrationListTab('main');
         try {
             if (isMockMode) {
                 const mockRegs = [
@@ -193,6 +223,7 @@ const SignupAdmin = () => {
                         id: 'mock_reg_01',
                         createdAt: new Date().toISOString(),
                         name: '王小明',
+                        email: 'ming@example.com',
                         phone: '0912-345-678',
                         source: '嘉吉老師',
                         paymentMethod: 'transfer',
@@ -200,31 +231,45 @@ const SignupAdmin = () => {
                         receivedAmount: 1980,
                         status: 'confirmed',
                         count: 1,
-                        adminNote: '已核對'
+                        adminNote: '已核對',
+                        invoiceType: 'general',
+                        payee: '嘉吉',
+                        registrationKind: 'main',
                     },
                     {
                         id: 'mock_reg_02',
                         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
                         name: '陳小華',
+                        email: 'hua@example.com',
                         phone: '0988-000-111',
                         source: 'FB廣告',
-                        paymentMethod: 'cash',
+                        paymentMethod: 'on_site',
+                        lastFive: '',
                         receivedAmount: 0,
                         status: 'pending',
-                        count: 2,
-                        adminNote: ''
+                        count: 1,
+                        adminNote: '',
+                        invoiceType: 'tax_id',
+                        taxId: '04595202',
+                        payee: '白白',
+                        registrationKind: 'refresher',
+                        previousSessionTitle: 'AI落地師培訓班（本地假資料）',
                     },
                     {
                         id: 'mock_reg_03',
                         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
                         name: '林小美',
+                        email: 'mei@example.com',
                         phone: '0900-222-333',
                         source: 'Rich老師',
                         paymentMethod: 'linepay',
                         receivedAmount: 1980,
                         status: 'cancelled',
                         count: 1,
-                        adminNote: '臨時有事'
+                        adminNote: '臨時有事',
+                        invoiceType: 'general',
+                        payee: '',
+                        registrationKind: 'main',
                     }
                 ];
                 setRegistrations(mockRegs);
@@ -239,26 +284,30 @@ const SignupAdmin = () => {
             setRegistrations(regs);
             setError('');
 
-            // Auto-Sync Capacity Logic
-            // Calculate active count from fetched registrations
-            const realActiveCount = regs.filter(r => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0);
-
-            // If mismatch with session's stored count, trigger a background update
-            if (session.id !== 'time_not_available' && session.currentCount !== realActiveCount) {
-                console.log(`Syncing capacity for session ${session.id}: DB=${session.currentCount}, Real=${realActiveCount}`);
+            // Auto-Sync：正課、複訓人數分開寫入 session
+            const realMainCount = regs
+                .filter(r => r.status !== 'cancelled' && (r.registrationKind || 'main') === 'main')
+                .reduce((acc, r) => acc + (r.count || 1), 0);
+            const realRefresherCount = regs
+                .filter(r => r.status !== 'cancelled' && r.registrationKind === 'refresher')
+                .reduce((acc, r) => acc + (r.count || 1), 0);
+            const needMainSync = (session.currentCount || 0) !== realMainCount;
+            const needRefSync = (session.refresherCurrentCount ?? 0) !== realRefresherCount;
+            if (session.id !== 'time_not_available' && (needMainSync || needRefSync)) {
                 const updateFn = httpsCallable(functions, 'updateVibeSession');
-
-                // Do not await to avoid blocking UI, run in background
                 updateFn({
-                    
                     sessionId: session.id,
-                    updates: { currentCount: realActiveCount }
-                }).catch(err => console.error("Auto-sync failed:", err));
-
-                // Update local state to reflect reality immediately
-                setSelectedSession(prev => ({ ...prev, currentCount: realActiveCount }));
-                // Also update sessions list
-                setSessions(prev => prev.map(s => s.id === session.id ? { ...s, currentCount: realActiveCount } : s));
+                    updates: { currentCount: realMainCount, refresherCurrentCount: realRefresherCount }
+                }).catch((err) => console.error("Auto-sync failed:", err));
+                setSelectedSession((prev) => ({
+                    ...prev,
+                    currentCount: realMainCount,
+                    refresherCurrentCount: realRefresherCount
+                }));
+                setSessions((prev) => prev.map((s) => (s.id === session.id
+                    ? { ...s, currentCount: realMainCount, refresherCurrentCount: realRefresherCount }
+                    : s
+                )));
             }
         } catch (err) {
             console.error(err);
@@ -287,6 +336,8 @@ const SignupAdmin = () => {
                     originalPrice: Number(newSession.originalPrice),
                     maxCapacity: Number(newSession.maxCapacity),
                     currentCount: 0,
+                    refresherMaxCapacity: Number(newSession.refresherMaxCapacity) > 0 ? Number(newSession.refresherMaxCapacity) : DEFAULT_REFRESHER_MAX,
+                    refresherCurrentCount: 0,
                     status: 'open',
                     isSignupOpen: newSession.isSignupOpen !== false
                 };
@@ -303,7 +354,10 @@ const SignupAdmin = () => {
             await createFn({
                 ...newSession,
                 date: isoDate,
-                endDate: endIsoDate
+                endDate: endIsoDate,
+                refresherMaxCapacity: Number(newSession.refresherMaxCapacity) > 0
+                    ? Number(newSession.refresherMaxCapacity)
+                    : DEFAULT_REFRESHER_MAX
             });
 
             setIsCreateSessionOpen(false);
@@ -332,7 +386,8 @@ const SignupAdmin = () => {
             maxCapacity: session.maxCapacity || 50,
             note: session.note || '',
             status: session.status || 'open',
-            isSignupOpen: session.isSignupOpen !== false
+            isSignupOpen: session.isSignupOpen !== false,
+            refresherMaxCapacity: (session.refresherMaxCapacity ?? 0) > 0 ? session.refresherMaxCapacity : DEFAULT_REFRESHER_MAX
         });
         setIsEditSessionOpen(true);
     };
@@ -352,7 +407,10 @@ const SignupAdmin = () => {
                     endDate: endIsoDate,
                     price: Number(editSessionForm.price),
                     originalPrice: Number(editSessionForm.originalPrice),
-                    maxCapacity: Number(editSessionForm.maxCapacity)
+                    maxCapacity: Number(editSessionForm.maxCapacity),
+                    refresherMaxCapacity: Number(editSessionForm.refresherMaxCapacity) > 0
+                        ? Number(editSessionForm.refresherMaxCapacity)
+                        : DEFAULT_REFRESHER_MAX
                 } : s));
                 setIsEditSessionOpen(false);
                 alert('（本地假資料）場次已更新');
@@ -370,7 +428,10 @@ const SignupAdmin = () => {
                     endDate: endIsoDate,
                     price: Number(editSessionForm.price),
                     originalPrice: Number(editSessionForm.originalPrice),
-                    maxCapacity: Number(editSessionForm.maxCapacity)
+                    maxCapacity: Number(editSessionForm.maxCapacity),
+                    refresherMaxCapacity: Number(editSessionForm.refresherMaxCapacity) > 0
+                        ? Number(editSessionForm.refresherMaxCapacity)
+                        : DEFAULT_REFRESHER_MAX
                 }
             });
 
@@ -391,9 +452,10 @@ const SignupAdmin = () => {
         setEditForm({
             status: reg.status || 'pending',
             paymentMethod: reg.paymentMethod || 'transfer',
-            receivedAmount: reg.receivedAmount || (selectedSession?.price || 1980),
+            receivedAmount: reg.receivedAmount ?? (reg.registrationKind === 'refresher' ? REFRESHER_FEE : (selectedSession?.price || 1980)),
             adminNote: reg.adminNote || '',
-            sessionId: reg.sessionId || selectedSession?.id || ''
+            sessionId: reg.sessionId || selectedSession?.id || '',
+            payee: reg.payee || ''
         });
         setIsEditRegOpen(true);
     };
@@ -412,27 +474,49 @@ const SignupAdmin = () => {
             const targetSession = sessions.find(s => s.id === nextSessionId) || null;
             const willMoveToAnotherSession = !!(editTarget.sessionId || selectedSession?.id) && nextSessionId !== (editTarget.sessionId || selectedSession?.id);
 
+            const isRefresherReg = (editTarget.registrationKind || '') === 'refresher';
+
             if (isMockMode) {
                 if (willMoveToAnotherSession) {
                     setRegistrations(prev => prev.filter(r => r.id !== editTarget.id));
                 } else {
-                    setRegistrations(prev => prev.map(r => r.id === editTarget.id ? { ...r, ...editForm, receivedAmount: Number(editForm.receivedAmount) } : r));
+                    setRegistrations(prev => prev.map(r => r.id === editTarget.id ? {
+                        ...r,
+                        ...editForm,
+                        ...(isRefresherReg
+                            ? { receivedAmount: r.receivedAmount, payee: r.payee, paymentMethod: r.paymentMethod }
+                            : { receivedAmount: Number(editForm.receivedAmount), payee: editForm.payee }
+                        )
+                    } : r));
                 }
                 setIsEditRegOpen(false);
                 setEditTarget(null);
                 return;
             }
             const updateFn = httpsCallable(functions, 'updateVibeRegistration');
+            const paymentUpdates = isRefresherReg
+                ? {
+                    paymentMethod: editTarget.paymentMethod,
+                    receivedAmount: Number(editTarget.receivedAmount ?? 0),
+                    payee: editTarget.payee || null,
+                }
+                : {
+                    paymentMethod: editForm.paymentMethod,
+                    receivedAmount: Number(editForm.receivedAmount),
+                    payee: editForm.payee || null,
+                };
             await updateFn({
                 
                 registrationId: editTarget.id,
                 updates: {
-                    ...editForm,
-                    receivedAmount: Number(editForm.receivedAmount),
+                    status: editForm.status,
+                    ...paymentUpdates,
+                    adminNote: editForm.adminNote,
                     sessionId: nextSessionId,
                     sessionTitle: targetSession?.title || null,
                     sessionDate: targetSession?.date || null,
                     sessionLocation: targetSession?.location || null,
+                    sessionAddress: targetSession?.address || null,
                 }
             });
 
@@ -440,7 +524,15 @@ const SignupAdmin = () => {
             if (willMoveToAnotherSession) {
                 setRegistrations(prev => prev.filter(r => r.id !== editTarget.id));
             } else {
-                setRegistrations(prev => prev.map(r => r.id === editTarget.id ? { ...r, ...editForm, receivedAmount: Number(editForm.receivedAmount), sessionId: nextSessionId } : r));
+                setRegistrations(prev => prev.map(r => r.id === editTarget.id ? {
+                    ...r,
+                    ...editForm,
+                    sessionId: nextSessionId,
+                    ...(isRefresherReg
+                        ? { receivedAmount: r.receivedAmount, payee: r.payee, paymentMethod: r.paymentMethod }
+                        : { receivedAmount: Number(editForm.receivedAmount), payee: editForm.payee }
+                    )
+                } : r));
             }
             setIsEditRegOpen(false);
             setEditTarget(null);
@@ -566,11 +658,9 @@ const SignupAdmin = () => {
         return `${origin}/signup/checkin/${registrationId}`;
     };
 
-    const copyCheckInLink = async (reg) => {
-        if (!reg?.id) {
-            alert('無法產生報到連結：缺少 UID');
-            return;
-        }
+    /** 與「複製報到」相同內文、主旨，供剪貼簿與 mailto / Gmail 帶用 */
+    const buildCheckInMessage = (reg) => {
+        if (!reg?.id) return null;
         const url = buildCheckInUrl(reg.id);
 
         const parseDate = (value) => {
@@ -591,33 +681,104 @@ const SignupAdmin = () => {
             });
         };
 
-        const sessionDateObj = parseDate(reg.sessionDate);
+        const sessionDateObj = parseDate(reg.sessionDate) || (selectedSession?.date ? parseDate(selectedSession.date) : null);
         const checkInDateObj = sessionDateObj ? new Date(sessionDateObj.getTime() - 30 * 60 * 1000) : null;
         const sessionTimeText = formatDateTime(sessionDateObj);
         const checkInTimeText = formatDateTime(checkInDateObj).split(' ').pop() || '-';
-        const sessionLocationText = reg.sessionLocation
-            ? `${reg.sessionLocation}（台中市中區民族路 23 號 3 樓）`
-            : 'TOP SPACE 商務中心（台中市中區民族路 23 號 3 樓）';
+        const loc = selectedSession?.location || reg.sessionLocation || '—';
+        const addr = selectedSession?.address || reg.sessionAddress;
+        const sessionLocationText = addr ? `${loc}（${addr}）` : loc;
 
-        const message = [
+        const isRef = reg.registrationKind === 'refresher';
+        const listPrice = isRef ? REFRESHER_FEE : (selectedSession?.price ?? 0);
+        const feeLine = reg.status === 'pending'
+            ? (isRef
+                ? `請記得當天帶複訓學費${listPrice}元現場繳費`
+                : (listPrice
+                    ? `若尚未匯款完成，請依簡訊/官方通知處理；參考場次學費 $${listPrice} 元。`
+                    : '請依簡訊或官方帳號通知完成付款與核對。'))
+            : null;
+
+        const text = [
             '【AI落地師培訓班｜報到資訊】',
             `學員：${reg.name || '-'}`,
-            `場次：${reg.sessionTitle || '-'}`,
+            `場次：${reg.sessionTitle || selectedSession?.title || '-'}`,
             `上課時間：${sessionTimeText}（${checkInTimeText}開放報到）`,
             `地點：${sessionLocationText}`,
             `報到連結：${url}`,
-            ...(reg.status === 'pending' ? ['請記得當天帶學費3980元現場繳費'] : []),
+            ...(feeLine ? [feeLine] : []),
             '',
             '請於現場出示此頁面 QR 碼完成報到。'
         ].join('\n');
 
+        const subject = `【AI落地師培訓班】報到資訊（${(reg.name || '-').trim()}）`;
+        return { text, subject };
+    };
+
+    const copyCheckInLink = async (reg) => {
+        const built = buildCheckInMessage(reg);
+        if (!built) {
+            alert('無法產生報到連結：缺少 UID');
+            return;
+        }
         try {
-            await navigator.clipboard.writeText(message);
+            await navigator.clipboard.writeText(built.text);
             alert('報到資訊已複製到剪貼簿');
         } catch (err) {
             console.error(err);
-            alert(`複製失敗，請手動複製：${message}`);
+            alert(`複製失敗，請手動複製：${built.text}`);
         }
+    };
+
+    /**
+     * 先同步開新分頁到 Gmail 撰寫（避免在 async/await 後被擋彈出視窗），接著寫入剪貼簿。
+     * 網址帶 to / su / body；過長則只帶 to、su，內文以剪貼簿為準。
+     */
+    const copyAndOpenGmailCompose = (reg) => {
+        const to = (reg?.email || '').trim();
+        if (!to || !to.includes('@')) {
+            alert('此學員未填寫有效 Email。');
+            return;
+        }
+        const built = buildCheckInMessage(reg);
+        if (!built) {
+            alert('無法產生報到連結：缺少 UID');
+            return;
+        }
+        const { text, subject } = built;
+        const base = 'https://mail.google.com/mail/?view=cm&fs=1';
+        const withBody = `${base}&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+        const GMAIL_URL_SAFE_MAX = 2000;
+        const useBody = withBody.length <= GMAIL_URL_SAFE_MAX;
+        const openUrl = useBody ? withBody : `${base}&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}`;
+
+        const w = window.open(openUrl, '_blank');
+        if (!w) {
+            void navigator.clipboard.writeText(text).then(
+                () => {
+                    alert('彈出視窗被攔截。內文已複製，請手動開啟 Gmail 並貼上。');
+                },
+                () => {
+                    alert('無法開啟分頁且剪貼簿寫入失敗，請改用「複製報到」。');
+                }
+            );
+            return;
+        }
+        w.opener = null;
+
+        void navigator.clipboard.writeText(text).then(
+            () => {
+                if (useBody) {
+                    alert('已開啟 Gmail 撰寫視窗，內文已寫入剪貼簿（多數情況連結也會帶入正文，若沒有再貼上即可）。');
+                } else {
+                    alert('內文已複製。因內文過長，Gmail 只帶入收件人與主旨，請在正文中按 ⌘V 或 Ctrl+V 貼上。');
+                }
+            },
+            (e) => {
+                console.error(e);
+                alert('已開啟 Gmail，但剪貼簿寫入失敗。請在畫面中從內文區複製內文，或改用「複製報到」。');
+            }
+        );
     };
 
     const formatDate = (value) => {
@@ -693,10 +854,27 @@ const SignupAdmin = () => {
         });
     }, [registrations]);
 
+    /** 依分頁顯示正課 / 複訓（舊資料視為正課） */
+    const displayedRegistrations = useMemo(() => {
+        if (!selectedSession || selectedSession.id === 'time_not_available') {
+            return sortedRegistrations;
+        }
+        if (registrationListTab === 'refresher') {
+            return sortedRegistrations.filter((r) => r.registrationKind === 'refresher');
+        }
+        return sortedRegistrations.filter((r) => (r.registrationKind || 'main') === 'main');
+    }, [sortedRegistrations, registrationListTab, selectedSession?.id]);
+
+    /** 正課／複訓分頁：複訓名單不顯示發票、收款、付款、金額欄 */
+    const isRefresherListTab =
+        !!selectedSession && selectedSession.id !== 'time_not_available' && registrationListTab === 'refresher';
+
     const paymentMethodToLabel = (pm) => {
         if (pm === 'transfer') return '轉帳';
+        if (pm === 'on_site') return '現場繳費';
         if (pm === 'cash') return '現金';
         if (pm === 'linepay') return 'LinePay';
+        if (pm === 'none') return '—';
         return '未指定';
     };
 
@@ -716,19 +894,54 @@ const SignupAdmin = () => {
 
     const sanitizeFilenameSegment = (raw) => (raw || 'export').replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
 
+    const formatInvoiceForCsv = (reg) => {
+        if (reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt') return '複訓不開發票';
+        if (reg.invoiceType === 'tax_id' && reg.taxId) return `統編 ${reg.taxId}`;
+        return '一般';
+    };
+
     const handleExportRegistrationsCsv = () => {
         if (!selectedSession) return;
-        if (sortedRegistrations.length === 0) {
+        if (displayedRegistrations.length === 0) {
             alert('目前沒有可匯出的報名資料');
             return;
         }
 
-        const headers = [
+        const listKindLabel = selectedSession.id === 'time_not_available' ? '全部' : (registrationListTab === 'refresher' ? '複訓' : '正課');
+        const csvOmitPaymentColumns = isRefresherListTab;
+
+        const headers = csvOmitPaymentColumns
+            ? [
+                '名單類型',
+                '場次名稱',
+                '報名時間',
+                '姓名',
+                'Email',
+                '電話',
+                '來源',
+                '報名類型',
+                '前次參加場次',
+                '人數',
+                '狀態',
+                '管理備註',
+                '報到時間',
+                '許願時間',
+                '許願地點',
+                '報名編號',
+                '報到連結',
+            ]
+            : [
+            '名單類型',
             '場次名稱',
             '報名時間',
             '姓名',
+            'Email',
             '電話',
             '來源',
+            '電子發票/統編',
+            '收款人',
+            '報名類型',
+            '前次參加場次',
             '付款方式',
             '轉帳末五碼',
             '人數',
@@ -739,17 +952,44 @@ const SignupAdmin = () => {
             '許願時間',
             '許願地點',
             '報名編號',
-            '報到連結'
+            '報到連結',
         ];
 
-        const rows = sortedRegistrations.map((reg) => {
+        const rows = displayedRegistrations.map((reg) => {
             const checkInUrl = reg.id ? buildCheckInUrl(reg.id) : '';
+            if (csvOmitPaymentColumns) {
+                return [
+                    listKindLabel,
+                    selectedSession.title || '',
+                    formatDate(reg.createdAt),
+                    reg.name || '',
+                    reg.email || '',
+                    reg.phone || '',
+                    reg.source || '',
+                    (reg.registrationKind || 'main') === 'refresher' ? '複訓' : '正課',
+                    [reg.previousSessionTitle, reg.previousSessionDate].filter(Boolean).join(' '),
+                    reg.count ?? 1,
+                    statusToLabel(reg.status),
+                    reg.adminNote || '',
+                    reg.checkInAt ? formatDate(reg.checkInAt) : '',
+                    reg.wishTime || '',
+                    reg.wishLocation || '',
+                    reg.id || '',
+                    checkInUrl,
+                ];
+            }
             return [
+                listKindLabel,
                 selectedSession.title || '',
                 formatDate(reg.createdAt),
                 reg.name || '',
+                reg.email || '',
                 reg.phone || '',
                 reg.source || '',
+                formatInvoiceForCsv(reg),
+                reg.payee || '',
+                (reg.registrationKind || 'main') === 'refresher' ? '複訓' : '正課',
+                [reg.previousSessionTitle, reg.previousSessionDate].filter(Boolean).join(' '),
                 paymentMethodToLabel(reg.paymentMethod),
                 reg.lastFive || '',
                 reg.count ?? 1,
@@ -760,7 +1000,7 @@ const SignupAdmin = () => {
                 reg.wishTime || '',
                 reg.wishLocation || '',
                 reg.id || '',
-                checkInUrl
+                checkInUrl,
             ];
         });
 
@@ -934,10 +1174,10 @@ const SignupAdmin = () => {
                                                 </p>
                                             )}
 
-                                            {/* Capacity Bar */}
-                                            <div className="mb-4">
+                                            {/* Capacity：正課 + 複訓 */}
+                                            <div className="mb-2">
                                                 <div className="flex justify-between text-xs mb-1">
-                                                    <span className="text-slate-500">報名狀況</span>
+                                                    <span className="text-slate-500">正課</span>
                                                     <span className={`font-bold ${(session.currentCount || 0) >= (session.maxCapacity || 50) ? 'text-red-500' : 'text-green-600'}`}>
                                                         {session.currentCount || 0} / {session.maxCapacity || 50}
                                                     </span>
@@ -949,6 +1189,28 @@ const SignupAdmin = () => {
                                                     ></div>
                                                 </div>
                                             </div>
+                                            <div className="mb-4">
+                                                {(() => {
+                                                    const rMax = session.refresherMaxCapacity > 0 ? session.refresherMaxCapacity : DEFAULT_REFRESHER_MAX;
+                                                    const rCur = session.refresherCurrentCount || 0;
+                                                    return (
+                                                        <>
+                                                            <div className="flex justify-between text-xs mb-1">
+                                                                <span className="text-slate-500">複訓 $500 可收</span>
+                                                                <span className={`font-bold ${rCur >= rMax ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                                                    {rCur} / {rMax}
+                                                                </span>
+                                                            </div>
+                                                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                                                <div
+                                                                    className={`h-full rounded-full ${rCur >= rMax ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                                    style={{ width: `${Math.min(100, (rCur / rMax) * 100)}%` }}
+                                                                />
+                                                            </div>
+                                                        </>
+                                                    );
+                                                })()}
+                                            </div>
 
                                             <div className="flex justify-between items-center text-sm text-slate-500">
                                                 {((session.currentCount || 0) >= (session.maxCapacity || 50)) ? (
@@ -956,8 +1218,15 @@ const SignupAdmin = () => {
                                                 ) : (
                                                     <span>NT$ {session.price}</span>
                                                 )}
-                                                <button onClick={() => fetchRegistrations(session)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-lg transition-colors">
-                                                    報名管理 ({session.currentCount || 0}) &rarr;
+                                                <button
+                                                    onClick={() => fetchRegistrations(session)}
+                                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-lg transition-colors text-left leading-snug"
+                                                    title="正課/複訓人數可進名單內分頁查看"
+                                                >
+                                                    報名管理
+                                                    <span className="block text-xs font-mono text-slate-500 mt-0.5">
+                                                        正{session.currentCount || 0} / 複{session.refresherCurrentCount || 0}
+                                                    </span>
                                                 </button>
                                             </div>
                                         </div>
@@ -982,7 +1251,9 @@ const SignupAdmin = () => {
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">LOC:</span> {selectedSession.location}</div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">ADDR:</span> {selectedSession.address}</div>
                                                 <div className="flex items-center gap-1"><span className="font-bold text-slate-400">單價:</span> ${selectedSession.price}</div>
-                                                <div className="flex items-center gap-1 bg-green-50 px-2 py-0.5 rounded border border-green-200"><span className="font-bold text-green-600">總實收:</span> <span className="text-green-700 font-bold">${registrations.filter(r => r.status === 'confirmed').reduce((sum, r) => sum + (r.receivedAmount || 0), 0)}</span></div>
+                                                {!isRefresherListTab && (
+                                                <div className="flex items-center gap-1 bg-green-50 px-2 py-0.5 rounded border border-green-200"><span className="font-bold text-green-600">本列表總實收:</span> <span className="text-green-700 font-bold">${displayedRegistrations.filter(r => r.status === 'confirmed').reduce((sum, r) => sum + (r.receivedAmount || 0), 0)}</span></div>
+                                                )}
                                             </div>
                                             {selectedSession.note && (
                                                 <div className="mt-3 text-sm text-slate-600">
@@ -991,33 +1262,74 @@ const SignupAdmin = () => {
                                             )}
                                         </div>
                                         <div className="mt-2 md:mt-0 w-full md:w-auto md:text-right">
-                                            <div className="text-xs text-slate-500 uppercase font-bold mb-1">Capacity</div>
-                                            <div className="text-3xl font-black text-slate-800">
-                                                {/* Calculate Active Count Client Side for Admin Accuracy */}
-                                                {registrations.filter(r => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0)}
-                                                <span className="text-lg text-slate-400 font-normal">/{selectedSession.id === 'time_not_available' ? '-' : (selectedSession.maxCapacity || 50)}</span>
-                                            </div>
-                                            {selectedSession.id !== 'time_not_available' && (selectedSession.currentCount || 0) >= (selectedSession.maxCapacity || 50) && (
-                                                <div className="text-xs text-red-500 font-bold bg-red-50 px-2 py-1 rounded inline-block mt-1">FULL</div>
+                                            {selectedSession.id === 'time_not_available' ? (
+                                                <>
+                                                    <div className="text-xs text-slate-500 uppercase font-bold mb-1">人數</div>
+                                                    <div className="text-3xl font-black text-slate-800">
+                                                        {registrations.filter((r) => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0)}
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="text-xs text-slate-500 font-bold mb-1">本頁名額（{registrationListTab === 'refresher' ? '複訓' : '正課'}）</div>
+                                                    <div className="text-2xl font-black text-slate-800">
+                                                        {displayedRegistrations.filter((r) => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0)}
+                                                        <span className="text-lg text-slate-400 font-normal">/
+                                                            {registrationListTab === 'refresher'
+                                                                ? (selectedSession.refresherMaxCapacity > 0 ? selectedSession.refresherMaxCapacity : DEFAULT_REFRESHER_MAX)
+                                                                : (selectedSession.maxCapacity || 50)}
+                                                        </span>
+                                                    </div>
+                                                    {registrationListTab === 'refresher' && (() => {
+                                                        const rMax = selectedSession.refresherMaxCapacity > 0 ? selectedSession.refresherMaxCapacity : DEFAULT_REFRESHER_MAX;
+                                                        const n = displayedRegistrations.filter((r) => r.status !== 'cancelled').reduce((acc, r) => acc + (r.count || 1), 0);
+                                                        if (n < rMax) return null;
+                                                        return (
+                                                            <div className="text-xs text-amber-700 font-bold bg-amber-50 px-2 py-1 rounded inline-block mt-1">複訓額滿（可備取）</div>
+                                                        );
+                                                    })()}
+                                                    {registrationListTab === 'main' && (selectedSession.currentCount || 0) >= (selectedSession.maxCapacity || 50) && (
+                                                        <div className="text-xs text-red-500 font-bold bg-red-50 px-2 py-1 rounded inline-block mt-1">正課額滿</div>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                                    <p className="font-bold text-amber-900">報到掃描頁「已繳費」怎麼判斷？</p>
-                                    <p className="mt-1 leading-relaxed">
-                                        只要<strong>狀態為「已確認」</strong>或<strong>實收金額大於 0</strong>，就會顯示已繳費。若在 Firestore
-                                        只把狀態改回待核對、但實收欄位仍大於 0，畫面仍會是已繳費。測試後若要還原，請用名單上的「清除報到資訊」。
-                                    </p>
-                                </div>
 
                                 <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
+                                    {selectedSession.id !== 'time_not_available' && (
+                                        <div className="flex flex-wrap gap-2 border-b border-slate-200 bg-slate-100/80 px-3 py-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setRegistrationListTab('main')}
+                                                className={`rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+                                                    registrationListTab === 'main'
+                                                        ? 'bg-sky-600 text-white shadow'
+                                                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                正課名單
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setRegistrationListTab('refresher')}
+                                                className={`rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+                                                    registrationListTab === 'refresher'
+                                                        ? 'bg-emerald-600 text-white shadow'
+                                                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                                                }`}
+                                            >
+                                                複訓名單
+                                            </button>
+                                        </div>
+                                    )}
                                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 px-4 py-3 border-b border-slate-200 bg-slate-50">
                                         <button
                                             type="button"
                                             onClick={handleExportRegistrationsCsv}
-                                            disabled={sortedRegistrations.length === 0}
+                                            disabled={displayedRegistrations.length === 0}
                                             className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1030,24 +1342,42 @@ const SignupAdmin = () => {
                                         <table className="w-full text-left border-collapse">
                                             <thead>
                                                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider">
-                                                    <th className="p-4 font-semibold">時間</th>
-                                                    <th className="p-4 font-semibold">姓名 / 電話</th>
-                                                    <th className="p-4 font-semibold">付款方式</th>
-                                                    <th className="p-4 font-semibold">金額 / 備註</th>
-                                                    <th className="p-4 font-semibold">狀態 / 報到</th>
-                                                    <th className="p-4 font-semibold">操作</th>
+                                                    <th className="p-3 font-semibold min-w-[130px]">時間</th>
+                                                    <th className="p-3 font-semibold min-w-[180px]">學員</th>
+                                                    {!isRefresherListTab && (
+                                                    <>
+                                                    <th className="p-3 font-semibold min-w-[90px]">發票</th>
+                                                    <th className="p-3 font-semibold w-[70px]">收款</th>
+                                                    <th className="p-3 font-semibold min-w-[90px]">付款</th>
+                                                    <th className="p-3 font-semibold min-w-[100px]">金額 / 備註</th>
+                                                    </>
+                                                    )}
+                                                    {isRefresherListTab && (
+                                                        <>
+                                                        <th className="p-3 font-semibold min-w-[200px]">前次報名場次</th>
+                                                        <th className="p-3 font-semibold min-w-[100px]">備註</th>
+                                                        </>
+                                                    )}
+                                                    <th className="p-3 font-semibold min-w-[120px]">狀態 / 報到</th>
+                                                    <th className="p-3 font-semibold min-w-[180px]">操作</th>
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                                                {sortedRegistrations.length === 0 ? (
-                                                    <tr><td colSpan="6" className="p-8 text-center text-slate-400">此場次尚無報名資料</td></tr>
-                                                ) : sortedRegistrations.map(reg => (
+                                                {displayedRegistrations.length === 0 ? (
+                                                    <tr><td colSpan={isRefresherListTab ? 6 : 8} className="p-8 text-center text-slate-400">此分類尚無報名資料</td></tr>
+                                                ) : displayedRegistrations.map((reg) => {
+                                                    const previousSessionText = getRefresherPreviousSessionText(reg);
+                                                    return (
                                                     <tr key={reg.id} className={`hover:bg-slate-50 transition-colors ${reg.status === 'cancelled' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
-                                                        <td className="p-4 text-slate-500 text-xs">{formatDate(reg.createdAt)}</td>
-                                                        <td className="p-4">
+                                                        <td className="p-3 text-slate-500 text-xs align-top">{formatDate(reg.createdAt)}</td>
+                                                        <td className="p-3 align-top">
                                                             <div className="font-bold text-slate-800">{reg.name}</div>
-                                                            <div className="font-mono text-xs text-slate-500">{reg.phone}</div>
-                                                            <div className="mt-1 text-xs text-blue-600 bg-blue-50 inline-block px-1 rounded">{reg.source}</div>
+                                                            {reg.email && <div className="text-xs text-slate-600 break-all max-w-[220px] mt-0.5">{reg.email}</div>}
+                                                            <div className="font-mono text-xs text-slate-500 mt-0.5">{reg.phone}</div>
+                                                            {!isRefresherListTab && <div className="mt-1 text-xs text-blue-600 bg-blue-50 inline-block px-1 rounded">{reg.source}</div>}
+                                                            {!isRefresherListTab && reg.registrationKind === 'refresher' && (reg.previousSessionTitle || reg.previousSessionDate) && (
+                                                                <div className="text-[10px] text-slate-600 mt-1">前次：{reg.previousSessionTitle || reg.previousSessionDate || '—'}</div>
+                                                            )}
                                                             {(reg.sessionId === 'time_not_available' || reg.isTimeNotAvailable) && (
                                                                 <div className="mt-2 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
                                                                     <div className="font-bold mb-0.5">許願開課</div>
@@ -1056,18 +1386,25 @@ const SignupAdmin = () => {
                                                                 </div>
                                                             )}
                                                         </td>
-                                                        <td className="p-4">
-                                                            <div className="text-sm font-medium">
-                                                                {reg.paymentMethod === 'transfer' && '轉帳'}
-                                                                {reg.paymentMethod === 'cash' && '現金'}
-                                                                {reg.paymentMethod === 'linepay' && 'LinePay'}
-                                                                {!reg.paymentMethod && '未指定'}
-                                                            </div>
+                                                        {!isRefresherListTab && (
+                                                        <>
+                                                        <td className="p-3 text-xs text-slate-700 align-top">
+                                                            {reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt' ? (
+                                                                <span className="text-slate-500">複訓不填</span>
+                                                            ) : reg.invoiceType === 'tax_id' && reg.taxId ? (
+                                                                <><span className="font-mono font-semibold text-slate-900">{reg.taxId}</span><span className="block text-[10px] text-slate-500">統編</span></>
+                                                            ) : (
+                                                                <span className="text-slate-500">一般</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-3 text-sm align-top">{reg.payee ? <span className="font-bold text-amber-900">{reg.payee}</span> : <span className="text-slate-300">—</span>}</td>
+                                                        <td className="p-3 align-top">
+                                                            <div className="text-sm font-medium">{paymentMethodToLabel(reg.paymentMethod)}</div>
                                                             {reg.paymentMethod === 'transfer' && reg.lastFive && (
                                                                 <div className="text-xs text-slate-500 font-mono">末五碼:{reg.lastFive}</div>
                                                             )}
                                                         </td>
-                                                        <td className="p-4">
+                                                        <td className="p-3 align-top">
                                                             <div className="font-bold">
                                                                 {reg.status === 'confirmed' ? (
                                                                     <span className="text-green-600">${reg.receivedAmount}</span>
@@ -1077,6 +1414,18 @@ const SignupAdmin = () => {
                                                             </div>
                                                             {reg.adminNote && <div className="text-xs text-slate-500 mt-1 max-w-[150px] truncate" title={reg.adminNote}>{reg.adminNote}</div>}
                                                         </td>
+                                                        </>
+                                                        )}
+                                                        {isRefresherListTab && (
+                                                            <>
+                                                            <td className="p-3 align-top text-xs text-slate-700 max-w-[220px]">
+                                                                <span className="line-clamp-4" title={previousSessionText !== '—' ? previousSessionText : undefined}>{previousSessionText}</span>
+                                                            </td>
+                                                            <td className="p-3 align-top text-xs text-slate-600 max-w-[140px]">
+                                                                {reg.adminNote ? <span className="line-clamp-3" title={reg.adminNote}>{reg.adminNote}</span> : <span className="text-slate-300">—</span>}
+                                                            </td>
+                                                            </>
+                                                        )}
                                                         <td className="p-4">
                                                             <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${reg.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                                                                 reg.status === 'cancelled' ? 'bg-red-100 text-red-800' :
@@ -1095,18 +1444,28 @@ const SignupAdmin = () => {
                                                         <td className="p-4">
                                                             <div className="flex flex-wrap gap-2">
                                                                 <button
-                                                                    onClick={() => copyCheckInLink(reg)}
-                                                                    className="px-3 py-1 bg-emerald-600 border border-emerald-600 rounded text-xs text-white hover:bg-emerald-700 font-bold"
-                                                                    title="複製報到 QR 頁面連結"
-                                                                >
-                                                                    複製報到資訊
-                                                                </button>
-                                                                <button
                                                                     onClick={() => openEditModal(reg)}
                                                                     className="px-3 py-1 bg-white border border-slate-300 rounded text-xs text-slate-600 hover:bg-slate-50 font-bold"
                                                                 >
                                                                     編輯
                                                                 </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => copyAndOpenGmailCompose(reg)}
+                                                                    disabled={!reg.email}
+                                                                    className="px-3 py-1 bg-violet-600 border border-violet-600 rounded text-xs text-white hover:bg-violet-500 font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    title="複製報到內文後，以新分頁開啟 Gmail 撰寫並帶入學員 Email"
+                                                                >
+                                                                    Gmail 撰寫
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => copyCheckInLink(reg)}
+                                                                    className="px-3 py-1 bg-emerald-600 border border-emerald-600 rounded text-xs text-white hover:bg-emerald-700 font-bold"
+                                                                    title="複製報到 QR 頁面連結"
+                                                                >
+                                                                    複製報到
+                                                                </button>
+                                                                
                                                                 {reg.status !== 'cancelled' && (
                                                                     <button
                                                                         type="button"
@@ -1115,41 +1474,40 @@ const SignupAdmin = () => {
                                                                         className="px-3 py-1 rounded text-xs font-bold border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                                                                         title="清除報到時間並重設為待核對、實收 0（方便測試還原）"
                                                                     >
-                                                                        清除報到資訊
+                                                                        清除報到
                                                                     </button>
                                                                 )}
-                                                                {reg.status !== 'cancelled' && (
+                                                                {/* {reg.status !== 'cancelled' && (
                                                                     <button onClick={() => handleQuickCancel(reg)} className="text-red-400 hover:text-red-600 text-xs underline">
                                                                         取消報名
                                                                     </button>
-                                                                )}
-                                                                <button onClick={() => handleDeleteRegistration(reg.id)} className="text-slate-400 hover:text-red-600 text-xs" title="刪除">
+                                                                )} */}
+                                                                {/* <button onClick={() => handleDeleteRegistration(reg.id)} className="text-slate-400 hover:text-red-600 text-xs" title="刪除">
                                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                                </button>
+                                                                </button> */}
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ))}
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
 
                                     {/* 手機版：卡片式清單，避免表格擠壓 */}
                                     <div className="md:hidden p-4">
-                                        {sortedRegistrations.length === 0 ? (
+                                        {displayedRegistrations.length === 0 ? (
                                             <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                                                此場次尚無報名資料
+                                                此分類尚無報名資料
                                             </div>
                                         ) : (
                                             <div className="space-y-2">
-                                                {sortedRegistrations.map(reg => {
-                                                    const paymentLabel = reg.paymentMethod === 'transfer' ? '轉帳'
-                                                        : reg.paymentMethod === 'cash' ? '現金'
-                                                            : reg.paymentMethod === 'linepay' ? 'LinePay'
-                                                                : '未指定';
+                                                {displayedRegistrations.map((reg) => {
+                                                    const paymentLabel = paymentMethodToLabel(reg.paymentMethod);
                                                     const paymentTail = reg.paymentMethod === 'transfer' && reg.lastFive
                                                         ? `（末五碼 ${reg.lastFive}）`
                                                         : '';
+                                                    const previousSessionText = getRefresherPreviousSessionText(reg);
                                                     return (
                                                     <article
                                                         key={reg.id}
@@ -1159,12 +1517,18 @@ const SignupAdmin = () => {
                                                         <div className="mt-0.5 flex items-start justify-between gap-2 min-w-0">
                                                             <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                                                                 <span className="font-bold text-slate-800 text-sm shrink-0">{reg.name}</span>
+                                                                {reg.registrationKind === 'refresher' && !isRefresherListTab && (
+                                                                    <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1 rounded">複訓</span>
+                                                                )}
+                                                                {reg.email && <span className="text-[10px] text-slate-500 break-all w-full">{reg.email}</span>}
                                                                 <span className="font-mono text-[11px] text-slate-500 break-all">{reg.phone}</span>
                                                             </div>
                                                             <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+                                                                {!isRefresherListTab && (
                                                                 <span className="text-[10px] leading-tight text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-px rounded whitespace-nowrap">
                                                                     {reg.source || '—'}
                                                                 </span>
+                                                                )}
                                                                 <span className={`text-[10px] leading-tight inline-flex items-center px-1.5 py-px rounded font-bold whitespace-nowrap ${reg.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                                                                     reg.status === 'cancelled' ? 'bg-red-100 text-red-800' :
                                                                         'bg-yellow-100 text-yellow-800'
@@ -1182,6 +1546,28 @@ const SignupAdmin = () => {
                                                             </div>
                                                         )}
 
+                                                        {!isRefresherListTab && (
+                                                        <div className="mt-1.5 text-[11px] text-slate-600">
+                                                            <span className="text-slate-500">發票</span>：
+                                                            {reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt'
+                                                                ? '複訓不填'
+                                                                : (reg.invoiceType === 'tax_id' && reg.taxId ? <span className="font-mono">統編 {reg.taxId}</span> : '一般')}
+                                                            {reg.payee && (
+                                                                <span className="ml-2"><span className="text-slate-500">收款</span>：<span className="font-bold text-amber-900">{reg.payee}</span></span>
+                                                            )}
+                                                        </div>
+                                                        )}
+                                                        {reg.registrationKind === 'refresher' && (reg.previousSessionTitle || reg.previousSessionDate) && (
+                                                            <div className="mt-0.5 text-[10px] text-slate-600">前次：{reg.previousSessionTitle || reg.previousSessionDate}</div>
+                                                        )}
+
+                                                        {isRefresherListTab ? (
+                                                            reg.adminNote && (
+                                                                <div className="mt-1.5 text-[11px] text-slate-600">
+                                                                    <span className="text-slate-500">備註</span>：{reg.adminNote}
+                                                                </div>
+                                                            )
+                                                        ) : (
                                                         <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-800 items-baseline">
                                                             <span className="min-w-0">
                                                                 <span className="text-slate-500">付款方式</span>：
@@ -1201,6 +1587,7 @@ const SignupAdmin = () => {
                                                                 </span>
                                                             ) : null}
                                                         </div>
+                                                        )}
 
                                                         <div className="mt-1.5 text-[11px] text-slate-600">
                                                             <span className="text-slate-500">現場報到</span>：
@@ -1211,7 +1598,16 @@ const SignupAdmin = () => {
                                                             )}
                                                         </div>
 
-                                                        <div className="mt-2 flex gap-2">
+                                                        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => copyAndOpenGmailCompose(reg)}
+                                                                disabled={!reg.email}
+                                                                className="flex-1 min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-bold border border-violet-600 bg-violet-600 text-white hover:bg-violet-500 active:bg-violet-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                title="複製報到內文並開啟 Gmail 撰寫"
+                                                            >
+                                                                Gmail
+                                                            </button>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => copyCheckInLink(reg)}
@@ -1300,7 +1696,27 @@ const SignupAdmin = () => {
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">價格</label><input type="number" value={newSession.price} onChange={e => setNewSession({ ...newSession, price: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">原價</label><input type="number" value={newSession.originalPrice} onChange={e => setNewSession({ ...newSession, originalPrice: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                 </div>
-                                <div><label className="text-xs font-bold text-slate-500 uppercase">名額上限</label><input type="number" value={newSession.maxCapacity} onChange={e => setNewSession({ ...newSession, maxCapacity: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                                    <p className="text-xs font-bold text-slate-700 mb-2">人數名額（正課與複訓分開，依場地調整）</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">正課名額上限</label>
+                                            <input type="number" min="1" value={newSession.maxCapacity} onChange={e => setNewSession({ ...newSession, maxCapacity: e.target.value })} required className="w-full border p-2 rounded bg-white" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">複訓收取人數</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={newSession.refresherMaxCapacity}
+                                                onChange={e => setNewSession({ ...newSession, refresherMaxCapacity: e.target.value })}
+                                                className="w-full border p-2 rounded bg-white"
+                                                placeholder={`預設 ${DEFAULT_REFRESHER_MAX}`}
+                                            />
+                                            <p className="text-[11px] text-slate-500 mt-1 leading-snug">預設 {DEFAULT_REFRESHER_MAX} 人；場地較小可在此下修。後台以「人數」寫入本場次。</p>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
                                     <textarea value={newSession.note} onChange={e => setNewSession({ ...newSession, note: e.target.value })} className="w-full border p-2 rounded h-24" placeholder="例如：請攜帶筆電 / 提早 10 分鐘報到"></textarea>
@@ -1344,7 +1760,28 @@ const SignupAdmin = () => {
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">地址</label><input type="text" value={editSessionForm.address} onChange={e => setEditSessionForm({ ...editSessionForm, address: e.target.value })} required className="w-full border p-2 rounded" /></div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div><label className="text-xs font-bold text-slate-500 uppercase">價格</label><input type="number" value={editSessionForm.price} onChange={e => setEditSessionForm({ ...editSessionForm, price: e.target.value })} required className="w-full border p-2 rounded" /></div>
-                                    <div><label className="text-xs font-bold text-slate-500 uppercase">名額上限</label><input type="number" value={editSessionForm.maxCapacity} onChange={e => setEditSessionForm({ ...editSessionForm, maxCapacity: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                    <div><label className="text-xs font-bold text-slate-500 uppercase">原價</label><input type="number" value={editSessionForm.originalPrice} onChange={e => setEditSessionForm({ ...editSessionForm, originalPrice: e.target.value })} required className="w-full border p-2 rounded" /></div>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                                    <p className="text-xs font-bold text-slate-700 mb-2">人數名額（正課與複訓分開，依場地調整）</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">正課名額上限</label>
+                                            <input type="number" min="1" value={editSessionForm.maxCapacity} onChange={e => setEditSessionForm({ ...editSessionForm, maxCapacity: e.target.value })} required className="w-full border p-2 rounded bg-white" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">複訓收取人數</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={editSessionForm.refresherMaxCapacity}
+                                                onChange={e => setEditSessionForm({ ...editSessionForm, refresherMaxCapacity: e.target.value })}
+                                                className="w-full border p-2 rounded bg-white"
+                                                placeholder={`預設 ${DEFAULT_REFRESHER_MAX}`}
+                                            />
+                                            <p className="text-[11px] text-slate-500 mt-1 leading-snug">預設 {DEFAULT_REFRESHER_MAX} 人；場地較小可下修。與正課人數分開。</p>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase">備註</label>
@@ -1376,6 +1813,7 @@ const SignupAdmin = () => {
                             <h3 className="text-xl font-bold text-slate-800 mb-4">編輯 / 核對資料</h3>
                             <div className="bg-slate-50 p-3 rounded-lg text-sm mb-4">
                                 <p><span className="text-slate-500">學員：</span> <span className="font-bold">{editTarget.name}</span></p>
+                                {editTarget.email && <p><span className="text-slate-500">Email：</span> {editTarget.email}</p>}
                                 <p><span className="text-slate-500">電話：</span> {editTarget.phone}</p>
                             </div>
 
@@ -1388,6 +1826,20 @@ const SignupAdmin = () => {
                                         <option value="cancelled">已取消 (Cancelled)</option>
                                     </select>
                                 </div>
+                                {editTarget.registrationKind !== 'refresher' && (
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-600 mb-1">收款人（收費註記）</label>
+                                    <select
+                                        value={editForm.payee}
+                                        onChange={(e) => setEditForm({ ...editForm, payee: e.target.value })}
+                                        className="w-full border p-2 rounded"
+                                    >
+                                        {PAYEE_OPTIONS.map((p) => (
+                                            <option key={p || 'empty'} value={p}>{p || '未指定'}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                )}
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">場次</label>
                                     <select
@@ -1404,12 +1856,16 @@ const SignupAdmin = () => {
                                     </select>
                                     <p className="text-xs text-slate-500 mt-1">變更場次後，此筆資料會從目前名單移除（請到新場次查看）。</p>
                                 </div>
+                                {editTarget.registrationKind !== 'refresher' && (
+                                <>
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">付款方式</label>
                                     <select value={editForm.paymentMethod} onChange={e => setEditForm({ ...editForm, paymentMethod: e.target.value })} className="w-full border p-2 rounded">
                                         <option value="transfer">轉帳匯款</option>
+                                        <option value="on_site">現場繳費（含複訓）</option>
                                         <option value="cash">現場現金</option>
                                         <option value="linepay">LinePay</option>
+                                        <option value="none">無（許願/特殊）</option>
                                         <option value="">未指定</option>
                                     </select>
                                 </div>
@@ -1417,6 +1873,11 @@ const SignupAdmin = () => {
                                     <label className="block text-sm font-bold text-slate-600 mb-1">實收金額</label>
                                     <input type="number" value={editForm.receivedAmount} onChange={e => setEditForm({ ...editForm, receivedAmount: e.target.value })} className="w-full border p-2 rounded" />
                                 </div>
+                                </>
+                                )}
+                                {editTarget.registrationKind === 'refresher' && (
+                                    <p className="text-xs text-slate-500 bg-emerald-50/80 border border-emerald-100 rounded-lg px-2 py-1.5">複訓以現場繳 500 元管理；名單上不顯示收款／付款／實收，儲存時不會變更這些後台欄位。</p>
+                                )}
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">備註</label>
                                     <textarea value={editForm.adminNote} onChange={e => setEditForm({ ...editForm, adminNote: e.target.value })} className="w-full border p-2 rounded h-20" placeholder="例如：早鳥優惠..."></textarea>

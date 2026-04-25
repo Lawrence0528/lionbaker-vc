@@ -466,6 +466,10 @@ exports.getVibeSessions = onCall(async (request) => {
             originalPrice: typeof s.originalPrice === "number" ? s.originalPrice : Number(s.originalPrice || 0),
             maxCapacity: typeof s.maxCapacity === "number" ? s.maxCapacity : Number(s.maxCapacity || 0),
             currentCount: typeof s.currentCount === "number" ? s.currentCount : Number(s.currentCount || 0),
+            refresherMaxCapacity:
+                typeof s.refresherMaxCapacity === "number" ? s.refresherMaxCapacity : Number(s.refresherMaxCapacity || 0),
+            refresherCurrentCount:
+                typeof s.refresherCurrentCount === "number" ? s.refresherCurrentCount : Number(s.refresherCurrentCount || 0),
         };
     });
 
@@ -479,6 +483,41 @@ exports.getVibeSessions = onCall(async (request) => {
     // SignupAdmin 會傳 userId，但我們不依賴它，避免被偽造
     void data;
     return { sessions };
+});
+
+/**
+ * 公開：複訓「前次參加場次」專用——僅回傳 isSignupOpen === false 的歷史場次（關閉報名＝可視為已結束受理）。
+ * 不須登入。若舊文件未帶 isSignupOpen，視同開放報名，不會出現在此列表。
+ */
+const mapVibeSessionDoc = (d) => {
+    const s = d.data() || {};
+    return {
+        ...s,
+        id: d.id,
+        date: toIso(s.date),
+        endDate: toIso(s.endDate),
+        createdAt: toIso(s.createdAt),
+        updatedAt: toIso(s.updatedAt),
+        price: typeof s.price === "number" ? s.price : Number(s.price || 0),
+        originalPrice: typeof s.originalPrice === "number" ? s.originalPrice : Number(s.originalPrice || 0),
+        maxCapacity: typeof s.maxCapacity === "number" ? s.maxCapacity : Number(s.maxCapacity || 0),
+        currentCount: typeof s.currentCount === "number" ? s.currentCount : Number(s.currentCount || 0),
+        refresherMaxCapacity:
+            typeof s.refresherMaxCapacity === "number" ? s.refresherMaxCapacity : Number(s.refresherMaxCapacity || 0),
+        refresherCurrentCount:
+            typeof s.refresherCurrentCount === "number" ? s.refresherCurrentCount : Number(s.refresherCurrentCount || 0),
+    };
+};
+
+exports.getVibeClosedSessionsForRefresher = onCall(async (request) => {
+    void request;
+    const maxDocs = 500;
+    const snap = await db.collection(VIBE_SESSIONS_COL).limit(maxDocs).get();
+    const closed = snap.docs
+        .map((d) => mapVibeSessionDoc(d))
+        .filter((s) => s.isSignupOpen === false);
+    closed.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    return { sessions: closed };
 });
 
 exports.createVibeSession = onCall(async (request) => {
@@ -503,6 +542,8 @@ exports.createVibeSession = onCall(async (request) => {
         originalPrice: Number(data.originalPrice || 0),
         maxCapacity: Number(data.maxCapacity || 0),
         currentCount: Number(data.currentCount || 0),
+        refresherMaxCapacity: Number(data.refresherMaxCapacity ?? 10),
+        refresherCurrentCount: Number(data.refresherCurrentCount || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
@@ -528,6 +569,12 @@ exports.updateVibeSession = onCall(async (request) => {
     if (safeUpdates.originalPrice != null) safeUpdates.originalPrice = Number(safeUpdates.originalPrice);
     if (safeUpdates.maxCapacity != null) safeUpdates.maxCapacity = Number(safeUpdates.maxCapacity);
     if (safeUpdates.currentCount != null) safeUpdates.currentCount = Number(safeUpdates.currentCount);
+    if (safeUpdates.refresherMaxCapacity != null) {
+        safeUpdates.refresherMaxCapacity = Number(safeUpdates.refresherMaxCapacity);
+    }
+    if (safeUpdates.refresherCurrentCount != null) {
+        safeUpdates.refresherCurrentCount = Number(safeUpdates.refresherCurrentCount);
+    }
     if (safeUpdates.isSignupOpen != null) safeUpdates.isSignupOpen = safeUpdates.isSignupOpen !== false;
 
     await db.collection(VIBE_SESSIONS_COL).doc(String(sessionId)).set(safeUpdates, { merge: true });

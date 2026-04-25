@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -20,6 +20,39 @@ const isValidEmailFormat = (email) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 };
 
+/** 台灣公司統一編號（8 碼）檢核（含第 7 位為 7 之特殊規則） */
+const isValidTaiwanGuiNumber = (raw) => {
+    const id = String(raw).trim();
+    if (!/^\d{8}$/.test(id)) return false;
+    if (/^(\d)\1{7}$/.test(id)) return false;
+    const weight = [1, 2, 1, 2, 1, 2, 4, 1];
+    let sum = 0;
+    for (let i = 0; i < 8; i++) {
+        const n = parseInt(id[i], 10) * weight[i];
+        sum += Math.floor(n / 10) + (n % 10);
+    }
+    if (sum % 10 === 0) return true;
+    if (id[6] === '7' && (sum + 1) % 10 === 0) return true;
+    return false;
+};
+
+const REFRESHER_FEE = 500;
+const DEFAULT_REFRESHER_MAX = 10;
+
+/** 複訓「前次場次」選項與寫入用：場次標題 ｜ 日期（週幾），不含上課時段 */
+const formatRefresherPreviousLabel = (s) => {
+    if (!s) return '';
+    const title = (s.title || '課程場次').trim();
+    if (!s.date) return title;
+    const d = new Date(s.date);
+    if (Number.isNaN(d.getTime())) return title;
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const day = d.getDate();
+    const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+    return `${title} ｜ ${y}/${m}/${day}（${wk}）`;
+};
+
 /** AI落地師培訓班 報名系統 - 學員填寫報名表單 */
 const Signup = () => {
     const [loading, setLoading] = useState(false);
@@ -34,6 +67,9 @@ const Signup = () => {
     const [selectedSessionId, setSelectedSessionId] = useState(null);
     const [sessionsLoading, setSessionsLoading] = useState(true);
     const [sessionsError, setSessionsError] = useState('');
+    /** 關閉報名之歷史場次（供複訓「前次參加場次」專用，與可報名場次分開載入） */
+    const [closedSessionsForRefresher, setClosedSessionsForRefresher] = useState([]);
+    const [closedSessionsForRefresherLoading, setClosedSessionsForRefresherLoading] = useState(true);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -45,7 +81,13 @@ const Signup = () => {
         paymentMethod: 'transfer',
         isTimeNotAvailable: false,
         wishTime: '',
-        wishLocation: ''
+        wishLocation: '',
+        /** 一般發票 general；統一編號 tax_id */
+        invoiceType: 'general',
+        taxId: '',
+        /** 正課 main、複訓 refresher */
+        registrationKind: 'main',
+        previousSessionId: ''
     });
 
     // UI State for Source Selection
@@ -55,6 +97,35 @@ const Signup = () => {
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
     const seoImage = `${siteOrigin}/signup.jpg`;
     const seoUrl = `${siteOrigin}/vibe`;
+
+    /**
+     * 複訓「前次參加場次」：只顯示後台已「關閉報名」的梯次（API 專用列表），再排除本場，由新到舊
+     */
+    const previousSessionOptions = useMemo(() => {
+        return closedSessionsForRefresher
+            .filter((s) => s.id && s.id !== selectedSessionId)
+            .sort((a, b) => {
+                const aTime = new Date(a.date).getTime();
+                const bTime = new Date(b.date).getTime();
+                const aOk = Number.isFinite(aTime);
+                const bOk = Number.isFinite(bTime);
+                if (!aOk && !bOk) return 0;
+                if (!aOk) return 1;
+                if (!bOk) return -1;
+                return bTime - aTime;
+            });
+    }, [closedSessionsForRefresher, selectedSessionId]);
+
+    /** 依「場次」設定的複訓收取人數上線（雲端未帶出時以 10 人為預設） */
+    const selectedSessionObj = useMemo(
+        () => (selectedSessionId && selectedSessionId !== 'time_not_available' ? sessions.find((s) => s.id === selectedSessionId) : null),
+        [sessions, selectedSessionId]
+    );
+    const selectedRefresherMax = useMemo(() => {
+        if (!selectedSessionObj) return DEFAULT_REFRESHER_MAX;
+        const n = Number(selectedSessionObj.refresherMaxCapacity);
+        return n > 0 ? n : DEFAULT_REFRESHER_MAX;
+    }, [selectedSessionObj]);
 
     useEffect(() => {
         if (sourceOption === 'Other') {
@@ -90,6 +161,24 @@ const Signup = () => {
             // Fetch Sessions (Real Data)
         };
         init();
+    }, []);
+
+    // 關閉報名歷史場次（雲端 Callable，與可報名列表分開）
+    useEffect(() => {
+        const load = async () => {
+            try {
+                setClosedSessionsForRefresherLoading(true);
+                const fn = httpsCallable(functions, 'getVibeClosedSessionsForRefresher');
+                const res = await fn();
+                setClosedSessionsForRefresher(res.data.sessions || []);
+            } catch (e) {
+                console.error('getVibeClosedSessionsForRefresher', e);
+                setClosedSessionsForRefresher([]);
+            } finally {
+                setClosedSessionsForRefresherLoading(false);
+            }
+        };
+        load();
     }, []);
 
     // Fetch Sessions (Real Data)
@@ -154,7 +243,9 @@ const Signup = () => {
                             price: 1980,
                             originalPrice: 5000,
                             status: 'open',
-                            title: 'AI落地師培訓班 (預設)'
+                            title: 'AI落地師培訓班 (預設)',
+                            refresherMaxCapacity: DEFAULT_REFRESHER_MAX,
+                            refresherCurrentCount: 0
                         }
                     ]);
                     setSelectedSessionId('default_01');
@@ -174,7 +265,9 @@ const Signup = () => {
                         price: 1980,
                         originalPrice: 5000,
                         status: 'open',
-                        title: 'AI落地師培訓班（預設）'
+                        title: 'AI落地師培訓班（預設）',
+                        refresherMaxCapacity: DEFAULT_REFRESHER_MAX,
+                        refresherCurrentCount: 0
                     }
                 ]);
                 setSelectedSessionId('default_01');
@@ -196,6 +289,11 @@ const Signup = () => {
         setFormData(prev => ({ ...prev, phone: digits }));
     };
 
+    const handleTaxIdInput = (e) => {
+        const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+        setFormData(prev => ({ ...prev, taxId: digits }));
+    };
+
     const handleSessionSelect = (sessionId) => {
         const nextId = String(sessionId);
         setSelectedSessionId(nextId);
@@ -204,10 +302,17 @@ const Signup = () => {
                 ...prev,
                 isTimeNotAvailable: false,
                 wishTime: '',
-                wishLocation: ''
+                wishLocation: '',
+                // 更換本場次時重新選擇曾參加之場次
+                previousSessionId: ''
             }));
         } else {
-            setFormData(prev => ({ ...prev, isTimeNotAvailable: true }));
+            setFormData(prev => ({
+                ...prev,
+                isTimeNotAvailable: true,
+                registrationKind: 'main',
+                previousSessionId: ''
+            }));
         }
     };
 
@@ -229,7 +334,12 @@ const Signup = () => {
                 return;
             }
         }
-        if (!formData.source) {
+
+        const isRefresher = !formData.isTimeNotAvailable && formData.registrationKind === 'refresher';
+        const isMain = !formData.isTimeNotAvailable && formData.registrationKind === 'main';
+
+        /** 複訓不填推薦人，改由系統寫入來源 */
+        if (!isRefresher && !formData.source) {
             setError('請填寫來源資訊');
             return;
         }
@@ -241,7 +351,37 @@ const Signup = () => {
             setError('請填寫有效的 Email。');
             return;
         }
-        if (!formData.isTimeNotAvailable) {
+
+        /** 僅正課需填寫／驗證電子發票；複訓不開放發票欄位 */
+        if (!formData.isTimeNotAvailable && isMain) {
+            if (formData.invoiceType === 'tax_id') {
+                if (formData.taxId.length !== 8) {
+                    setError('統一編號須為 8 碼數字。');
+                    return;
+                }
+                if (!isValidTaiwanGuiNumber(formData.taxId)) {
+                    setError('統一編號校驗不正確，請確認 8 碼是否正確。');
+                    return;
+                }
+            }
+        }
+
+        if (isRefresher) {
+            if (previousSessionOptions.length === 0) {
+                setError('目前沒有「關閉報名之歷史梯次」可勾選。請主辦於後台關閉舊梯報名、或先改選正課、或聯絡主辦。');
+                return;
+            }
+            if (!formData.previousSessionId) {
+                setError('請選擇曾參加之場次。');
+                return;
+            }
+            if (String(formData.previousSessionId) === String(selectedSessionId)) {
+                setError('曾參加之場次不可與本場次相同。');
+                return;
+            }
+        }
+
+        if (isMain) {
             if (formData.lastFive.length !== 5) {
                 setError('匯款後五碼必須為 5 碼');
                 return;
@@ -252,36 +392,82 @@ const Signup = () => {
 
         try {
             const selectedSession = sessions.find(s => s.id === selectedSessionId);
+            const previousSession = isRefresher
+                ? closedSessionsForRefresher.find((s) => s.id === formData.previousSessionId) || null
+                : null;
             // 重要：無論 selectedSession 是否存在，都要寫入 sessionId，避免後台用 where(sessionId==...) 查不到
             const sessionInfo = {
                 sessionId: selectedSessionId,
                 sessionTitle: formData.isTimeNotAvailable ? '以上場次時間無法配合' : (selectedSession?.title || null),
                 sessionDate: formData.isTimeNotAvailable ? null : (selectedSession?.date || null), // ISO 字串（由場次資料決定）
                 sessionLocation: formData.isTimeNotAvailable ? null : (selectedSession?.location || null),
+                sessionAddress: formData.isTimeNotAvailable ? null : (selectedSession?.address || null),
             };
 
-            await addDoc(collection(db, 'registrations_vibe'), {
-                ...formData,
+            const sourceResolved = isRefresher ? '複訓' : formData.source;
+            const basePayload = {
+                name: formData.name.trim(),
                 email: formData.email.trim(),
-                ...sessionInfo,
+                phone: formData.phone,
+                source: sourceResolved,
+                count: formData.count || 1,
+                isTimeNotAvailable: formData.isTimeNotAvailable,
+                wishTime: formData.wishTime,
+                wishLocation: formData.wishLocation,
                 lineUserId: lineProfile?.userId || null,
                 createdAt: serverTimestamp(),
-                status: 'pending'
-            });
+                status: 'pending',
+                ...sessionInfo,
+            };
+
+            if (formData.isTimeNotAvailable) {
+                await addDoc(collection(db, 'registrations_vibe'), {
+                    ...basePayload,
+                    invoiceType: 'general',
+                    taxId: null,
+                    registrationKind: 'main',
+                    previousSessionId: null,
+                    previousSessionTitle: null,
+                    previousSessionDate: null,
+                    paymentMethod: 'none',
+                    lastFive: '',
+                    expectedFee: 0,
+                });
+            } else {
+                await addDoc(collection(db, 'registrations_vibe'), {
+                    ...basePayload,
+                    invoiceType: isRefresher ? 'refresher_exempt' : formData.invoiceType,
+                    taxId: isRefresher ? null : (formData.invoiceType === 'tax_id' ? formData.taxId : null),
+                    registrationKind: formData.registrationKind,
+                    previousSessionId: isRefresher ? formData.previousSessionId : null,
+                    previousSessionTitle: isRefresher
+                        ? (formatRefresherPreviousLabel(previousSession) || previousSession?.title || null)
+                        : null,
+                    previousSessionDate: isRefresher && previousSession?.date ? String(previousSession.date) : null,
+                    paymentMethod: isRefresher ? 'on_site' : 'transfer',
+                    lastFive: isMain ? formData.lastFive : '',
+                    expectedFee: isRefresher ? REFRESHER_FEE : (Number(selectedSession?.price) || 0),
+                });
+            }
 
             if (isLiffLoggedIn && liff.isInClient()) {
                 const methodText = formData.isTimeNotAvailable
                     ? ''
-                    : `\n匯款後五碼：${formData.lastFive}`;
+                    : (isRefresher
+                        ? `\n報名類型：複訓（${REFRESHER_FEE} 元現場繳費）\n前次參加：${formatRefresherPreviousLabel(previousSession) || previousSession?.title || '-'}`
+                        : `\n匯款後五碼：${formData.lastFive}`);
 
                 const sessionText = formData.isTimeNotAvailable
                     ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
                     : (selectedSession?.displayDate || '2026/02/08');
+                const kindLine = !formData.isTimeNotAvailable && isMain
+                    ? '\n報名類型：正課'
+                    : '';
 
                 await liff.sendMessages([
                     {
                         type: 'text',
-                        text: `【報名成功】\n姓名：${formData.name}\n場次：${sessionText}${methodText}\n\n感謝您的報名，我們已收到您的資訊！`
+                        text: `【報名成功】\n姓名：${formData.name}\n場次：${sessionText}${kindLine}${methodText}\n\n感謝您的報名，我們已收到您的資訊！`
                     }
                 ]);
             }
@@ -332,13 +518,17 @@ const Signup = () => {
                         <button
                             type="button"
                             onClick={() => {
+                                const isRef = !formData.isTimeNotAvailable && formData.registrationKind === 'refresher';
                                 const methodText = formData.isTimeNotAvailable
                                     ? ''
-                                    : `\n匯款後五碼：${formData.lastFive}`;
+                                    : (isRef
+                                        ? `\n報名類型：複訓（${REFRESHER_FEE} 元現場繳費）`
+                                        : `\n匯款後五碼：${formData.lastFive}`);
                                 const sessionText = formData.isTimeNotAvailable
                                     ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}`
                                     : (sessions.find(s => s.id === selectedSessionId)?.displayDate || '-');
-                                const msg = `【AI落地師培訓班 報名回報】\n姓名：${formData.name}\n場次：${sessionText}${methodText}\n來源：${formData.source}\n\n(系統自動產生)`;
+                                const sourceText = isRef ? '複訓' : formData.source;
+                                const msg = `【AI落地師培訓班 報名回報】\n姓名：${formData.name}\n場次：${sessionText}${methodText}\n來源：${sourceText}\n\n(系統自動產生)`;
                                 const url = `https://line.me/R/oaMessage/${LINE_OA_ID}/?${encodeURIComponent(msg)}`;
                                 window.location.href = url;
                             }}
@@ -623,6 +813,11 @@ const Signup = () => {
                                     <div className="grid grid-cols-1 gap-3">
                                         {sessions.map(session => {
                                             const isFull = (session.currentCount || 0) >= (session.maxCapacity || 50);
+                                            const rMax = Number(session.refresherMaxCapacity) > 0
+                                                ? Number(session.refresherMaxCapacity)
+                                                : DEFAULT_REFRESHER_MAX;
+                                            const rCount = session.refresherCurrentCount || 0;
+                                            const isRefresherFull = rCount >= rMax;
 
                                             return (
                                                 <div
@@ -675,7 +870,20 @@ const Signup = () => {
                                                                 {isFull ? (
                                                                     <span className="text-amber-700 font-semibold">已額滿，您的報名將排入備取</span>
                                                                 ) : (
-                                                                    `名額狀態: 剩餘 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`
+                                                                    `正課名額: 剩餘 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <div className="mt-3 pt-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-1">
+                                                            <div>
+                                                                <p className="text-xs font-bold text-emerald-800">複訓報名</p>
+                                                                <p className="text-sm font-black text-emerald-700 mt-0.5">${REFRESHER_FEE.toLocaleString()}（現場繳費）</p>
+                                                            </div>
+                                                            <div className="text-xs text-slate-500">
+                                                                {isRefresherFull ? (
+                                                                    <span className="text-amber-700 font-semibold">複訓已額滿，報名可排備取</span>
+                                                                ) : (
+                                                                    `複訓可收: 剩餘 ${rMax - rCount} / ${rMax} 人`
                                                                 )}
                                                             </div>
                                                         </div>
@@ -715,6 +923,65 @@ const Signup = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {!formData.isTimeNotAvailable && selectedSessionId && selectedSessionId !== 'time_not_available' && (
+                                <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5">
+                                    <p className="text-sm font-bold text-slate-800 mb-3">報名類型 <span className="text-rose-600">*</span></p>
+                                    <div className="flex flex-col gap-3">
+                                        <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-slate-200 bg-white p-3 has-[:checked]:border-sky-400 has-[:checked]:bg-sky-50/80">
+                                            <input
+                                                type="radio"
+                                                name="registrationKind"
+                                                className="mt-1 h-4 w-4"
+                                                checked={formData.registrationKind === 'main'}
+                                                onChange={() => setFormData(prev => ({ ...prev, registrationKind: 'main' }))}
+                                            />
+                                            <span>
+                                                <span className="block font-bold text-slate-900">正課</span>
+                                                <span className="block text-xs text-slate-600 mt-0.5">匯款報名，依本場次公告金額繳交。</span>
+                                            </span>
+                                        </label>
+                                        <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-slate-200 bg-white p-3 has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50/60">
+                                            <input
+                                                type="radio"
+                                                name="registrationKind"
+                                                className="mt-1 h-4 w-4"
+                                                checked={formData.registrationKind === 'refresher'}
+                                                onChange={() => setFormData((prev) => ({ ...prev, registrationKind: 'refresher', invoiceType: 'general', taxId: '' }))}
+                                            />
+                                            <span>
+                                                <span className="block font-bold text-slate-900">複訓</span>
+                                                <span className="block text-xs text-slate-600 mt-0.5">費用 {REFRESHER_FEE} 元、當天現場繳交。本場次可收 {selectedRefresherMax} 人（額滿可備取；人數在後台此場次設定，預設 10 人、場地小可下修）。</span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    {formData.registrationKind === 'refresher' && (
+                                        <div className="mt-4">
+                                            <label className="block text-sm font-semibold text-slate-700">
+                                                前次參加場次 <span className="text-rose-600">*</span>
+                                            </label>
+                                            <p className="text-xs text-slate-500 mt-0.5 mb-2">僅列出主辦已在後台「關閉報名」的梯次。選項內文為 <strong>場次標題 ｜ 日期</strong>（不顯示上課時段）。</p>
+                                            <select
+                                                className="w-full px-4 py-3 rounded-xl bg-white border border-emerald-200 text-slate-900 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 outline-none disabled:opacity-60"
+                                                value={formData.previousSessionId}
+                                                onChange={(e) => setFormData((prev) => ({ ...prev, previousSessionId: e.target.value }))}
+                                                required
+                                                disabled={closedSessionsForRefresherLoading}
+                                            >
+                                                <option value="">{closedSessionsForRefresherLoading ? '載入歷史梯次中…' : '請選擇曾參加之場次'}</option>
+                                                {previousSessionOptions.map((s) => (
+                                                    <option key={s.id} value={s.id}>
+                                                        {formatRefresherPreviousLabel(s)}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {!closedSessionsForRefresherLoading && previousSessionOptions.length === 0 && (
+                                                <p className="text-xs text-amber-800 mt-2">名單為空代表尚無「關閉報名」之梯次；請主辦先關閉舊梯、或你改選正課、或聯絡主辦協助。</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </section>
+                            )}
 
                             {/* Wish Fields (Conditional) */}
                             {formData.isTimeNotAvailable && (
@@ -811,7 +1078,53 @@ const Signup = () => {
                                 />
                             </div>
 
-                            {/* Source */}
+                            {!formData.isTimeNotAvailable && formData.registrationKind === 'main' && (
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-700 mb-3">電子發票 <span className="text-rose-600">*</span></p>
+                                    <div className="flex flex-col gap-3">
+                                        <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="invoiceType"
+                                                className="h-4 w-4"
+                                                checked={formData.invoiceType === 'general'}
+                                                onChange={() => setFormData(prev => ({ ...prev, invoiceType: 'general', taxId: '' }))}
+                                            />
+                                            <span className="text-sm text-slate-800">一般發票</span>
+                                        </label>
+                                        <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="invoiceType"
+                                                className="h-4 w-4"
+                                                checked={formData.invoiceType === 'tax_id'}
+                                                onChange={() => setFormData(prev => ({ ...prev, invoiceType: 'tax_id' }))}
+                                            />
+                                            <span className="text-sm text-slate-800">統一編號</span>
+                                        </label>
+                                    </div>
+                                    {formData.invoiceType === 'tax_id' && (
+                                        <div className="mt-3">
+                                            <label className="block text-sm font-semibold text-slate-700 mb-1">
+                                                統一編號 <span className="text-rose-600">*</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                inputMode="numeric"
+                                                value={formData.taxId}
+                                                onChange={handleTaxIdInput}
+                                                maxLength={8}
+                                                placeholder="8 碼數字"
+                                                className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-900 tracking-widest focus:border-sky-400 focus:ring-4 focus:ring-sky-100 outline-none"
+                                            />
+                                            <p className="text-xs text-slate-500 mt-1">僅能輸入 8 碼阿拉伯數字，送出前會檢查統編規則。</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* 推薦人／來源：正課、許願需填；複訓由系統帶入不顯示 */}
+                            {(formData.isTimeNotAvailable || formData.registrationKind === 'main') && (
                             <div>
                                 <label className="block text-sm font-semibold text-slate-700 mb-3">推薦人 / 來源 <span className="text-rose-600">*</span></label>
                                 <div className="grid grid-cols-2 gap-3 mb-3">
@@ -849,8 +1162,16 @@ const Signup = () => {
                                     />
                                 )}
                             </div>
-                            {/* Payment Method（僅一般報名需要） */}
-                            {!formData.isTimeNotAvailable && (
+                            )}
+                            {/* Payment：正課＝匯款；複訓＝現場繳費 */}
+                            {!formData.isTimeNotAvailable && formData.registrationKind === 'refresher' && (
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900">
+                                    <p className="font-bold text-base mb-1">複訓費用 {REFRESHER_FEE} 元</p>
+                                    <p>請於上課當天於現場繳交現金（或由現場人員引導付款方式），無須匯款後五碼。</p>
+                                </div>
+                            )}
+
+                            {!formData.isTimeNotAvailable && formData.registrationKind === 'main' && (
                                 <>
                                     <div>
                                         <label className="block text-sm font-semibold text-slate-700 mb-2">
