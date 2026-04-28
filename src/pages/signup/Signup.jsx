@@ -36,6 +36,14 @@ const isValidTaiwanGuiNumber = (raw) => {
     return false;
 };
 
+/** 統編輸入正規化：全形數字轉半形、去除空白與非數字，最多 8 碼 */
+const normalizeGuiInput = (raw) =>
+    String(raw ?? '')
+        .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 65248))
+        .replace(/\s/g, '')
+        .replace(/\D/g, '')
+        .slice(0, 8);
+
 const REFRESHER_FEE = 500;
 const DEFAULT_REFRESHER_MAX = 10;
 
@@ -290,7 +298,7 @@ const Signup = () => {
     };
 
     const handleTaxIdInput = (e) => {
-        const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+        const digits = normalizeGuiInput(e.target.value);
         setFormData(prev => ({ ...prev, taxId: digits }));
     };
 
@@ -352,14 +360,16 @@ const Signup = () => {
             return;
         }
 
+        const normalizedTaxId = normalizeGuiInput(formData.taxId);
+
         /** 僅正課需填寫／驗證電子發票；複訓不開放發票欄位 */
         if (!formData.isTimeNotAvailable && isMain) {
             if (formData.invoiceType === 'tax_id') {
-                if (formData.taxId.length !== 8) {
+                if (normalizedTaxId.length !== 8) {
                     setError('統一編號須為 8 碼數字。');
                     return;
                 }
-                if (!isValidTaiwanGuiNumber(formData.taxId)) {
+                if (!isValidTaiwanGuiNumber(normalizedTaxId)) {
                     setError('統一編號校驗不正確，請確認 8 碼是否正確。');
                     return;
                 }
@@ -391,6 +401,17 @@ const Signup = () => {
         setLoading(true);
 
         try {
+            const checkDup = httpsCallable(functions, 'checkVibeRegistrationDuplicate');
+            const dupResult = await checkDup({
+                sessionId: selectedSessionId,
+                email: formData.email.trim(),
+                phone: formData.phone
+            });
+            if (dupResult.data?.duplicate) {
+                setError('此手機或 Email 已用於本場次報名，若為本人重複送出請聯絡主辦；若誤用他人聯絡方式請改填正確資料。');
+                return;
+            }
+
             const selectedSession = sessions.find(s => s.id === selectedSessionId);
             const previousSession = isRefresher
                 ? closedSessionsForRefresher.find((s) => s.id === formData.previousSessionId) || null
@@ -437,7 +458,7 @@ const Signup = () => {
                 await addDoc(collection(db, 'registrations_vibe'), {
                     ...basePayload,
                     invoiceType: isRefresher ? 'refresher_exempt' : formData.invoiceType,
-                    taxId: isRefresher ? null : (formData.invoiceType === 'tax_id' ? formData.taxId : null),
+                    taxId: isRefresher ? null : (formData.invoiceType === 'tax_id' ? normalizedTaxId : null),
                     registrationKind: formData.registrationKind,
                     previousSessionId: isRefresher ? formData.previousSessionId : null,
                     previousSessionTitle: isRefresher

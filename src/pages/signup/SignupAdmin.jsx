@@ -26,6 +26,10 @@ const getRefresherPreviousSessionText = (reg) => {
     return '—';
 };
 
+/** 身份比對用：去空白、轉小寫、手機僅留數字 */
+const normalizeIdentityText = (value) => String(value || '').trim().toLowerCase();
+const normalizePhoneDigits = (value) => String(value || '').replace(/\D/g, '');
+
 const SignupAdmin = () => {
     const isDev = import.meta?.env?.DEV;
     const isMockMode = isDev && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mock') === '1';
@@ -89,8 +93,12 @@ const SignupAdmin = () => {
         receivedAmount: 0,
         adminNote: '',
         sessionId: '',
-        payee: ''
+        payee: '',
+        invoiceType: 'general',
+        taxId: ''
     });
+    const [identityVerifySessionId, setIdentityVerifySessionId] = useState('');
+    const [identityVerifiedMap, setIdentityVerifiedMap] = useState({});
 
     useEffect(() => {
         if (isMockMode) {
@@ -216,6 +224,8 @@ const SignupAdmin = () => {
         setSelectedSession(session);
         setViewMode('registrations');
         setRegistrationListTab('main');
+        setIdentityVerifiedMap({});
+        setIdentityVerifySessionId('');
         try {
             if (isMockMode) {
                 const mockRegs = [
@@ -449,13 +459,17 @@ const SignupAdmin = () => {
 
     const openEditModal = (reg) => {
         setEditTarget(reg);
+        const isInvoiceEditable =
+            (reg.registrationKind || 'main') !== 'refresher' && reg.invoiceType !== 'refresher_exempt';
         setEditForm({
             status: reg.status || 'pending',
             paymentMethod: reg.paymentMethod || 'transfer',
             receivedAmount: reg.receivedAmount ?? (reg.registrationKind === 'refresher' ? REFRESHER_FEE : (selectedSession?.price || 1980)),
             adminNote: reg.adminNote || '',
             sessionId: reg.sessionId || selectedSession?.id || '',
-            payee: reg.payee || ''
+            payee: reg.payee || '',
+            invoiceType: isInvoiceEditable && reg.invoiceType === 'tax_id' ? 'tax_id' : 'general',
+            taxId: isInvoiceEditable && reg.taxId ? String(reg.taxId) : ''
         });
         setIsEditRegOpen(true);
     };
@@ -475,6 +489,16 @@ const SignupAdmin = () => {
             const willMoveToAnotherSession = !!(editTarget.sessionId || selectedSession?.id) && nextSessionId !== (editTarget.sessionId || selectedSession?.id);
 
             const isRefresherReg = (editTarget.registrationKind || '') === 'refresher';
+            const canEditInvoice = !isRefresherReg && editTarget.invoiceType !== 'refresher_exempt';
+
+            if (canEditInvoice && editForm.invoiceType === 'tax_id') {
+                const tid = String(editForm.taxId || '').trim();
+                if (!/^\d{8}$/.test(tid)) {
+                    alert('統一編號須為 8 位數字。');
+                    setOpLoading(false);
+                    return;
+                }
+            }
 
             if (isMockMode) {
                 if (willMoveToAnotherSession) {
@@ -486,6 +510,13 @@ const SignupAdmin = () => {
                         ...(isRefresherReg
                             ? { receivedAmount: r.receivedAmount, payee: r.payee, paymentMethod: r.paymentMethod }
                             : { receivedAmount: Number(editForm.receivedAmount), payee: editForm.payee }
+                        ),
+                        ...(canEditInvoice
+                            ? {
+                                invoiceType: editForm.invoiceType === 'tax_id' ? 'tax_id' : 'general',
+                                taxId: editForm.invoiceType === 'tax_id' ? String(editForm.taxId || '').trim() : null
+                            }
+                            : {}
                         )
                     } : r));
                 }
@@ -505,12 +536,19 @@ const SignupAdmin = () => {
                     receivedAmount: Number(editForm.receivedAmount),
                     payee: editForm.payee || null,
                 };
+            const invoicePatch = canEditInvoice
+                ? {
+                    invoiceType: editForm.invoiceType === 'tax_id' ? 'tax_id' : 'general',
+                    taxId: editForm.invoiceType === 'tax_id' ? String(editForm.taxId || '').trim() : null
+                }
+                : {};
             await updateFn({
                 
                 registrationId: editTarget.id,
                 updates: {
                     status: editForm.status,
                     ...paymentUpdates,
+                    ...invoicePatch,
                     adminNote: editForm.adminNote,
                     sessionId: nextSessionId,
                     sessionTitle: targetSession?.title || null,
@@ -531,7 +569,8 @@ const SignupAdmin = () => {
                     ...(isRefresherReg
                         ? { receivedAmount: r.receivedAmount, payee: r.payee, paymentMethod: r.paymentMethod }
                         : { receivedAmount: Number(editForm.receivedAmount), payee: editForm.payee }
-                    )
+                    ),
+                    ...invoicePatch
                 } : r));
             }
             setIsEditRegOpen(false);
@@ -813,16 +852,16 @@ const SignupAdmin = () => {
     }, {});
 
     const sortedSessions = useMemo(() => {
-        // 依開課日期由近到遠排序（日期近的排前面）
+        // 依開課日期由新到舊（最近日期在列表最上方）；無效或缺少日期者排在後方
         return [...sessions].sort((a, b) => {
-            const aTime = a?.date ? new Date(a.date).getTime() : Number.POSITIVE_INFINITY;
-            const bTime = b?.date ? new Date(b.date).getTime() : Number.POSITIVE_INFINITY;
-            const aValid = Number.isFinite(aTime);
-            const bValid = Number.isFinite(bTime);
-            if (!aValid && !bValid) return 0;
-            if (!aValid) return 1;
-            if (!bValid) return -1;
-            return aTime - bTime;
+            const aTime = a?.date ? new Date(a.date).getTime() : null;
+            const bTime = b?.date ? new Date(b.date).getTime() : null;
+            const aValid = aTime != null && Number.isFinite(aTime);
+            const bValid = bTime != null && Number.isFinite(bTime);
+            if (aValid && bValid) return bTime - aTime;
+            if (aValid && !bValid) return -1;
+            if (!aValid && bValid) return 1;
+            return 0;
         });
     }, [sessions]);
 
@@ -898,6 +937,58 @@ const SignupAdmin = () => {
         if (reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt') return '複訓不開發票';
         if (reg.invoiceType === 'tax_id' && reg.taxId) return `統編 ${reg.taxId}`;
         return '一般';
+    };
+
+    const handleBatchVerifyRefresherIdentity = async () => {
+        if (!selectedSession || selectedSession.id === 'time_not_available') {
+            alert('請先進入一般場次的名單頁，再執行身份檢查。');
+            return;
+        }
+        if (!identityVerifySessionId) {
+            alert('請先選擇要比對的場次。');
+            return;
+        }
+        const refresherRegs = displayedRegistrations.filter((r) => (r.registrationKind || '') === 'refresher');
+        if (refresherRegs.length === 0) {
+            alert('目前複訓名單沒有可檢查的學員。');
+            return;
+        }
+
+        setOpLoading(true);
+        try {
+            let targetRegs = [];
+            if (isMockMode) {
+                targetRegs = registrations;
+            } else {
+                const getRegFn = httpsCallable(functions, 'getVibeRegistrations');
+                const result = await getRegFn({ sessionId: identityVerifySessionId });
+                targetRegs = result?.data?.registrations || [];
+            }
+
+            const verified = {};
+            const candidates = Array.isArray(targetRegs) ? targetRegs : [];
+            refresherRegs.forEach((reg) => {
+                const regName = normalizeIdentityText(reg.name);
+                const regEmail = normalizeIdentityText(reg.email);
+                const regPhone = normalizePhoneDigits(reg.phone);
+                if (!regName || !regEmail || !regPhone) return;
+
+                const matched = candidates.some((target) => {
+                    const tName = normalizeIdentityText(target.name);
+                    const tEmail = normalizeIdentityText(target.email);
+                    const tPhone = normalizePhoneDigits(target.phone);
+                    return regName === tName && regEmail === tEmail && regPhone === tPhone;
+                });
+                if (matched && reg.id) verified[reg.id] = true;
+            });
+
+            setIdentityVerifiedMap(verified);
+            alert(`身份檢查完成：共 ${Object.keys(verified).length} 位已核對身份。`);
+        } catch (err) {
+            alert(`身份檢查失敗: ${err.message}`);
+        } finally {
+            setOpLoading(false);
+        }
     };
 
     const handleExportRegistrationsCsv = () => {
@@ -1326,6 +1417,32 @@ const SignupAdmin = () => {
                                         </div>
                                     )}
                                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 px-4 py-3 border-b border-slate-200 bg-slate-50">
+                                        {isRefresherListTab && (
+                                            <>
+                                                <select
+                                                    value={identityVerifySessionId}
+                                                    onChange={(e) => setIdentityVerifySessionId(e.target.value)}
+                                                    className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                                                >
+                                                    <option value="">選擇要比對的場次</option>
+                                                    {sortedSessions
+                                                        .filter((s) => s.id !== selectedSession?.id)
+                                                        .map((s) => (
+                                                            <option key={s.id} value={s.id}>
+                                                                {s.title}｜{new Date(s.date).toLocaleDateString('zh-TW')} {new Date(s.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                                            </option>
+                                                        ))}
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleBatchVerifyRefresherIdentity}
+                                                    disabled={opLoading || displayedRegistrations.length === 0}
+                                                    className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-800 shadow-sm transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    一鍵檢查身份
+                                                </button>
+                                            </>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={handleExportRegistrationsCsv}
@@ -1371,7 +1488,12 @@ const SignupAdmin = () => {
                                                     <tr key={reg.id} className={`hover:bg-slate-50 transition-colors ${reg.status === 'cancelled' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
                                                         <td className="p-3 text-slate-500 text-xs align-top">{formatDate(reg.createdAt)}</td>
                                                         <td className="p-3 align-top">
-                                                            <div className="font-bold text-slate-800">{reg.name}</div>
+                                                            <div className="font-bold text-slate-800 inline-flex items-center gap-2">
+                                                                <span>{reg.name}</span>
+                                                                {isRefresherListTab && identityVerifiedMap[reg.id] && (
+                                                                    <span className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">已核對身份</span>
+                                                                )}
+                                                            </div>
                                                             {reg.email && <div className="text-xs text-slate-600 break-all max-w-[220px] mt-0.5">{reg.email}</div>}
                                                             <div className="font-mono text-xs text-slate-500 mt-0.5">{reg.phone}</div>
                                                             {!isRefresherListTab && <div className="mt-1 text-xs text-blue-600 bg-blue-50 inline-block px-1 rounded">{reg.source}</div>}
@@ -1517,6 +1639,9 @@ const SignupAdmin = () => {
                                                         <div className="mt-0.5 flex items-start justify-between gap-2 min-w-0">
                                                             <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                                                                 <span className="font-bold text-slate-800 text-sm shrink-0">{reg.name}</span>
+                                                                {isRefresherListTab && identityVerifiedMap[reg.id] && (
+                                                                    <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1 rounded">已核對身份</span>
+                                                                )}
                                                                 {reg.registrationKind === 'refresher' && !isRefresherListTab && (
                                                                     <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1 rounded">複訓</span>
                                                                 )}
@@ -1808,16 +1933,18 @@ const SignupAdmin = () => {
 
                 {/* MODAL: EDIT REGISTRATION */}
                 {isEditRegOpen && editTarget && (
-                    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-                        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up">
-                            <h3 className="text-xl font-bold text-slate-800 mb-4">編輯 / 核對資料</h3>
-                            <div className="bg-slate-50 p-3 rounded-lg text-sm mb-4">
-                                <p><span className="text-slate-500">學員：</span> <span className="font-bold">{editTarget.name}</span></p>
-                                {editTarget.email && <p><span className="text-slate-500">Email：</span> {editTarget.email}</p>}
-                                <p><span className="text-slate-500">電話：</span> {editTarget.phone}</p>
+                    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm overflow-y-auto">
+                        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full flex flex-col max-h-[min(90vh,90dvh)] min-h-0 overflow-hidden animate-fade-in-up overscroll-contain">
+                            <div className="shrink-0 px-6 pt-6">
+                                <h3 className="text-xl font-bold text-slate-800 mb-4">編輯 / 核對資料</h3>
+                                <div className="bg-slate-50 p-3 rounded-lg text-sm">
+                                    <p><span className="text-slate-500">學員：</span> <span className="font-bold">{editTarget.name}</span></p>
+                                    {editTarget.email && <p><span className="text-slate-500">Email：</span> {editTarget.email}</p>}
+                                    <p><span className="text-slate-500">電話：</span> {editTarget.phone}</p>
+                                </div>
                             </div>
 
-                            <div className="space-y-4">
+                            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4 space-y-4">
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">狀態</label>
                                     <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} className="w-full border p-2 rounded">
@@ -1838,6 +1965,50 @@ const SignupAdmin = () => {
                                             <option key={p || 'empty'} value={p}>{p || '未指定'}</option>
                                         ))}
                                     </select>
+                                </div>
+                                )}
+                                {editTarget.registrationKind !== 'refresher' && editTarget.invoiceType !== 'refresher_exempt' && (
+                                <div className="space-y-2">
+                                    <span className="block text-sm font-bold text-slate-600">電子發票</span>
+                                    <div className="flex flex-col gap-2">
+                                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="adminInvoiceType"
+                                                checked={editForm.invoiceType === 'general'}
+                                                onChange={() => setEditForm((prev) => ({ ...prev, invoiceType: 'general', taxId: '' }))}
+                                                className="h-4 w-4"
+                                            />
+                                            <span className="text-sm text-slate-800">二聯式（一般 / 不需統編）</span>
+                                        </label>
+                                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="adminInvoiceType"
+                                                checked={editForm.invoiceType === 'tax_id'}
+                                                onChange={() => setEditForm((prev) => ({ ...prev, invoiceType: 'tax_id' }))}
+                                                className="h-4 w-4"
+                                            />
+                                            <span className="text-sm text-slate-800">三聯式（公司統一編號）</span>
+                                        </label>
+                                    </div>
+                                    {editForm.invoiceType === 'tax_id' && (
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">統一編號（8 碼）</label>
+                                            <input
+                                                type="text"
+                                                inputMode="numeric"
+                                                maxLength={8}
+                                                value={editForm.taxId}
+                                                onChange={(e) => {
+                                                    const digits = e.target.value.replace(/\D/g, '').slice(0, 8);
+                                                    setEditForm((prev) => ({ ...prev, taxId: digits }));
+                                                }}
+                                                className="w-full border p-2 rounded font-mono"
+                                                placeholder="12345678"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                                 )}
                                 <div>
@@ -1884,9 +2055,9 @@ const SignupAdmin = () => {
                                 </div>
                             </div>
 
-                            <div className="flex gap-3 mt-8">
-                                <button onClick={() => setIsEditRegOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
-                                <button onClick={handleUpdateRegistration} disabled={opLoading} className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50">{opLoading ? '儲存' : '儲存變更'}</button>
+                            <div className="shrink-0 flex gap-3 border-t border-slate-100 bg-white px-6 pb-6 pt-4">
+                                <button type="button" onClick={() => setIsEditRegOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
+                                <button type="button" onClick={handleUpdateRegistration} disabled={opLoading} className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50">{opLoading ? '儲存' : '儲存變更'}</button>
                             </div>
                         </div>
                     </div>

@@ -520,6 +520,43 @@ exports.getVibeClosedSessionsForRefresher = onCall(async (request) => {
     return { sessions: closed };
 });
 
+/**
+ * 報名頁專用：同場次內，若 Email 或手機任其一與「非已取消」的既有報名相同，則不可再送出一筆。
+ * 不須登入。客戶端無法 list 查重，改由此 Callable 讀取 Admin 權限。
+ */
+exports.checkVibeRegistrationDuplicate = onCall(async (request) => {
+    const { sessionId, email, phone } = request.data || {};
+    if (sessionId == null || String(sessionId).length === 0) {
+        throw new HttpsError("invalid-argument", "缺少 sessionId。");
+    }
+    if (email == null || phone == null) {
+        throw new HttpsError("invalid-argument", "缺少 email 或 phone。");
+    }
+    const emailNorm = String(email).trim().toLowerCase();
+    const phoneNorm = String(phone).replace(/\D/g, "");
+    if (!emailNorm || !/^09\d{8}$/.test(phoneNorm)) {
+        throw new HttpsError("invalid-argument", "參數格式不正確。");
+    }
+
+    const sid = String(sessionId);
+    const snap = await db.collection(VIBE_REGISTRATIONS_COL).where("sessionId", "==", sid).get();
+
+    for (const d of snap.docs) {
+        const r = d.data() || {};
+        if (String(r.status || "pending") === "cancelled") {
+            continue;
+        }
+        const re = String(r.email || "")
+            .trim()
+            .toLowerCase();
+        const rp = String(r.phone || "").replace(/\D/g, "");
+        if (re === emailNorm || rp === phoneNorm) {
+            return { duplicate: true };
+        }
+    }
+    return { duplicate: false };
+});
+
 exports.createVibeSession = onCall(async (request) => {
     await assertAdmin(request);
     const data = request.data || {};
