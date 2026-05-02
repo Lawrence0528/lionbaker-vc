@@ -66,6 +66,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 推薦連結（文件 ID = 8 碼網址代碼）：報名頁可單筆查詢帶入推薦人；後台可查列表與維護
+    match /vibe_referral_codes/{code} {
+      allow get: if true;
+      allow list: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+      allow create, update: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+      allow delete: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+    }
+
     // 其餘集合僅允許 Admin SDK（Cloud Functions 等）存取
     match /{document=**} {
       allow read, write: if false;

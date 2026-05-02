@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
-import { resolvePosterSrc, resolvePosterSeoUrl, SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION } from './signupLandingShared';
+import {
+    resolvePosterSrc,
+    resolvePosterSeoUrl,
+    SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
+    VIBE_REFERRAL_CODES_COLLECTION,
+    normalizeVibeSignupRefParam,
+} from './signupLandingShared';
 import { useSignupLandingSettings } from './useSignupLandingSettings';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import liff from '@line/liff';
 
@@ -120,6 +126,12 @@ const Signup = () => {
     });
     const [sourceOption, setSourceOption] = useState('');
     const [customSource, setCustomSource] = useState('');
+    /** 成功由 ?ref= 解析並鎖定時，不重寫 formData.source、並隱藏手動來源區塊 */
+    const [signupReferralLocked, setSignupReferralLocked] = useState(false);
+    /** 連結内含上層推薦人時存此物件；報名送出寫入 Firestore，但畫面上不揭露上層 */
+    const [signupReferralMeta, setSignupReferralMeta] = useState(null);
+    const [signupReferralCode, setSignupReferralCode] = useState('');
+    const [signupRefUrlNotice, setSignupRefUrlNotice] = useState('');
 
     const parallaxOffset = useParallax(0.25);
 
@@ -152,9 +164,52 @@ const Signup = () => {
     }, [selectedSessionObj]);
 
     useEffect(() => {
+        if (signupReferralLocked) return;
         if (sourceOption === 'Other') setFormData(prev => ({ ...prev, source: customSource }));
         else setFormData(prev => ({ ...prev, source: sourceOption }));
-    }, [sourceOption, customSource]);
+    }, [sourceOption, customSource, signupReferralLocked]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const raw = new URLSearchParams(window.location.search).get('ref');
+        if (raw == null || String(raw).trim() === '') return;
+
+        const alnum = normalizeVibeSignupRefParam(raw);
+        if (alnum.length !== 8) {
+            setSignupRefUrlNotice('推薦連結代碼須為 8 碼英數字，請向主辦確認網址。');
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const snap = await getDoc(doc(db, VIBE_REFERRAL_CODES_COLLECTION, alnum));
+                if (cancelled) return;
+                if (!snap.exists()) {
+                    setSignupRefUrlNotice('查無此推薦連結代碼，請改用手動選擇「推薦人 / 來源」。');
+                    return;
+                }
+                const row = snap.data() || {};
+                const refName = String(row.referrerName || '').trim();
+                const upper = String(row.upperReferrerName || '').trim();
+                if (!refName) {
+                    setSignupRefUrlNotice('此推薦連結資料未設定姓名，請聯絡主辦或使用手動來源。');
+                    return;
+                }
+                setSignupReferralLocked(true);
+                setSignupReferralMeta({ referrerName: refName, upperReferrerName: upper });
+                setSignupReferralCode(alnum);
+                setSignupRefUrlNotice('');
+                setFormData(prev => ({ ...prev, source: refName }));
+            } catch (e) {
+                if (!cancelled) {
+                    console.error('resolve referral ref', e);
+                    setSignupRefUrlNotice('無法載入推薦連結資料，請稍後再試或改用手動選擇來源。');
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
     useEffect(() => {
         const init = async () => {
@@ -284,8 +339,39 @@ const Signup = () => {
                 sessionLocation: formData.isTimeNotAvailable ? null : (selectedSession?.location || null),
                 sessionAddress: formData.isTimeNotAvailable ? null : (selectedSession?.address || null),
             };
-            const sourceResolved = isRefresher ? '複訓' : formData.source;
-            const basePayload = { name: formData.name.trim(), email: formData.email.trim(), phone: formData.phone, source: sourceResolved, count: formData.count || 1, isTimeNotAvailable: formData.isTimeNotAvailable, wishTime: formData.wishTime, wishLocation: formData.wishLocation, lineUserId: lineProfile?.userId || null, createdAt: serverTimestamp(), status: 'pending', ...sessionInfo };
+            let sourceResolved;
+            let referrerNameOut;
+            let upperReferrerNameOut;
+            if (isRefresher) {
+                sourceResolved = '複訓';
+                referrerNameOut = null;
+                upperReferrerNameOut = null;
+            } else if (signupReferralMeta) {
+                referrerNameOut = String(signupReferralMeta.referrerName || '').trim();
+                upperReferrerNameOut = String(signupReferralMeta.upperReferrerName || '').trim() || null;
+                sourceResolved = referrerNameOut;
+            } else {
+                referrerNameOut = String(formData.source || '').trim();
+                upperReferrerNameOut = null;
+                sourceResolved = referrerNameOut;
+            }
+            const basePayload = {
+                name: formData.name.trim(),
+                email: formData.email.trim(),
+                phone: formData.phone,
+                source: sourceResolved,
+                referrerName: referrerNameOut,
+                upperReferrerName: upperReferrerNameOut,
+                referralCode: signupReferralLocked && signupReferralCode ? signupReferralCode : null,
+                count: formData.count || 1,
+                isTimeNotAvailable: formData.isTimeNotAvailable,
+                wishTime: formData.wishTime,
+                wishLocation: formData.wishLocation,
+                lineUserId: lineProfile?.userId || null,
+                createdAt: serverTimestamp(),
+                status: 'pending',
+                ...sessionInfo,
+            };
             if (formData.isTimeNotAvailable) {
                 await addDoc(collection(db, 'registrations_vibe'), { ...basePayload, invoiceType: 'general', taxId: null, registrationKind: 'main', previousSessionId: null, previousSessionTitle: null, previousSessionDate: null, paymentMethod: 'none', lastFive: '', expectedFee: 0 });
             } else {
@@ -776,7 +862,18 @@ const Signup = () => {
                                         )}
 
                                         {/* Source */}
-                                        {(formData.isTimeNotAvailable || formData.registrationKind === 'main') && (
+                                        {signupRefUrlNotice && (formData.isTimeNotAvailable || formData.registrationKind === 'main') && (
+                                            <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                                                {signupRefUrlNotice}
+                                            </div>
+                                        )}
+                                        {(formData.isTimeNotAvailable || formData.registrationKind === 'main') && signupReferralLocked && (
+                                            <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-sky-300">
+                                                <p className="font-semibold text-sky-200 mb-0.5">推薦人 / 來源（已由連結帶入）</p>
+                                                <p className="text-zinc-300">{signupReferralMeta?.referrerName || formData.source}</p>
+                                            </div>
+                                        )}
+                                        {(formData.isTimeNotAvailable || formData.registrationKind === 'main') && !signupReferralLocked && (
                                             <div>
                                                 <label className="block text-sm font-semibold text-zinc-300 mb-3">推薦人 / 來源 <span className="text-rose-400">*</span></label>
                                                 <div className="grid grid-cols-2 gap-2 mb-2">

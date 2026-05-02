@@ -6,6 +6,20 @@ export const SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION = false;
 export const SIGNUP_LANDING_COLLECTION = 'signup_page_settings';
 export const SIGNUP_LANDING_DOC_ID = 'default';
 
+/** Firestore：`vibe_referral_codes/{8碼}`，公開報名頁以 `?ref=` 對應文件 ID */
+export const VIBE_REFERRAL_CODES_COLLECTION = 'vibe_referral_codes';
+
+/** URL `ref` 正規化：僅保留英數字，並預期為 8 碼（與後台網址代碼一致） */
+export function normalizeVibeSignupRefParam(raw) {
+    try {
+        return decodeURIComponent(String(raw ?? '').trim()).replace(/[^A-Za-z0-9]/g, '');
+    } catch {
+        return String(raw ?? '')
+            .trim()
+            .replace(/[^A-Za-z0-9]/g, '');
+    }
+}
+
 /** 後台未設定海報時使用（保留 public 既有檔） */
 export const FALLBACK_POSTER_PATH = '/S__158801977.jpg';
 

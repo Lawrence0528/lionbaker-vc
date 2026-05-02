@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { auth, functions, googleProvider, db, storage } from '../../firebase';
-import { collection, query, orderBy, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
@@ -12,6 +12,7 @@ import {
     extractYoutubeVideoId,
     resolvePosterSrc,
     SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
+    VIBE_REFERRAL_CODES_COLLECTION,
 } from './signupLandingShared';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
@@ -19,9 +20,81 @@ const ADMIN_EMAIL = 'charge0528@gmail.com';
 /** 報到 QR 連結一律使用此生產網域（勿跟瀏覽器網址列走 firebase hosting 預設網域） */
 const PUBLIC_SIGNUP_CHECKIN_ORIGIN = 'https://ai.lionbaker.com';
 
+const REFERRAL_SIGNUP_PUBLIC_PATH = '/signup';
+const REFERRAL_CODE_LEN = 8;
+const REFERRAL_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+function randomSignupRefCode8() {
+    let out = '';
+    const buf = new Uint8Array(REFERRAL_CODE_LEN);
+    if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+        globalThis.crypto.getRandomValues(buf);
+        for (let i = 0; i < REFERRAL_CODE_LEN; i++) {
+            out += REFERRAL_CODE_CHARS[buf[i] % REFERRAL_CODE_CHARS.length];
+        }
+    } else {
+        for (let i = 0; i < REFERRAL_CODE_LEN; i++) {
+            out += REFERRAL_CODE_CHARS[Math.floor(Math.random() * REFERRAL_CODE_CHARS.length)];
+        }
+    }
+    return out;
+}
+
+function mapReferralSnapshotToRows(snap) {
+    const rows = snap.docs.map((x) => {
+        const data = x.data() || {};
+        return {
+            code: x.id,
+            referrerName: String(data.referrerName || ''),
+            upperReferrerName: String(data.upperReferrerName || ''),
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+        };
+    });
+    rows.sort((a, b) => {
+        const ta =
+            (typeof a.updatedAt?.toMillis === 'function' ? a.updatedAt.toMillis() : 0) ||
+            (typeof a.createdAt?.toMillis === 'function' ? a.createdAt.toMillis() : 0);
+        const tb =
+            (typeof b.updatedAt?.toMillis === 'function' ? b.updatedAt.toMillis() : 0) ||
+            (typeof b.createdAt?.toMillis === 'function' ? b.createdAt.toMillis() : 0);
+        return tb - ta;
+    });
+    return rows;
+}
+
+function buildReferralPublicUrl(code) {
+    const c = String(code || '').trim();
+    return `${PUBLIC_SIGNUP_CHECKIN_ORIGIN}${REFERRAL_SIGNUP_PUBLIC_PATH}?ref=${encodeURIComponent(c)}`;
+}
+
 const REFRESHER_FEE = 500;
 const DEFAULT_REFRESHER_MAX = 10;
 const PAYEE_OPTIONS = ['', '嘉吉', '偉志', '白白'];
+
+/** 舊資料僅有合併於 source 時，還原「推薦人／上層」 */
+const splitMergedReferrerSource = (raw) => {
+    const s = String(raw ?? '').trim();
+    if (!s) return { referrerName: '', upperReferrerName: '' };
+    const m = s.match(/^(.+?)（上層：(.+)）$/);
+    if (m) return { referrerName: String(m[1]).trim(), upperReferrerName: String(m[2]).trim() };
+    return { referrerName: s, upperReferrerName: '' };
+};
+
+function getRegistrationReferrerParts(reg) {
+    const docR = String(reg.referrerName ?? '').trim();
+    const docU = String(reg.upperReferrerName ?? '').trim();
+    if (docR || docU) return { referrerName: docR, upperReferrerName: docU };
+    return splitMergedReferrerSource(reg.source || '');
+}
+
+/** 後台儲存時同步寫入合併摘要欄 source（與舊匯出相容） */
+const buildMergedReferrerSourceField = (referrerName, upperReferrerName) => {
+    const r = String(referrerName ?? '').trim();
+    const u = String(upperReferrerName ?? '').trim();
+    if (!r) return '';
+    return u ? `${r}（上層：${u}）` : r;
+};
 
 /** 複訓名單「前次報名場次」欄（與報名寫入之 title / 日期 對齊） */
 const getRefresherPreviousSessionText = (reg) => {
@@ -145,7 +218,9 @@ const SignupAdmin = () => {
         sessionId: '',
         payee: '',
         invoiceType: 'general',
-        taxId: ''
+        taxId: '',
+        referrerName: '',
+        upperReferrerName: '',
     });
     const [identityVerifiedMap, setIdentityVerifiedMap] = useState({});
 
@@ -156,6 +231,14 @@ const SignupAdmin = () => {
     const [landingUploading, setLandingUploading] = useState(false);
     const [landingMsg, setLandingMsg] = useState('');
     const landingPosterInputRef = useRef(null);
+
+    /** 報名頁推薦連結 CRUD：`vibe_referral_codes` */
+    const [referralCrudMode, setReferralCrudMode] = useState(null); // null | 'create' | 'edit'
+    const [referralForm, setReferralForm] = useState({ code: '', referrerName: '', upperReferrerName: '' });
+    const [referralList, setReferralList] = useState([]);
+    const [referralListLoading, setReferralListLoading] = useState(false);
+    const [referralOpMsg, setReferralOpMsg] = useState('');
+    const [referralSaving, setReferralSaving] = useState(false);
 
     useEffect(() => {
         if (isMockMode) {
@@ -283,6 +366,27 @@ const SignupAdmin = () => {
         };
     }, [adminEmail, viewMode, isMockMode]);
 
+    const reloadReferralList = useCallback(async () => {
+        if (isMockMode) {
+            setReferralList([]);
+            return;
+        }
+        setReferralListLoading(true);
+        try {
+            const snap = await getDocs(collection(db, VIBE_REFERRAL_CODES_COLLECTION));
+            setReferralList(mapReferralSnapshotToRows(snap));
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setReferralListLoading(false);
+        }
+    }, [isMockMode]);
+
+    useEffect(() => {
+        if (!adminEmail || viewMode !== 'landing' || isMockMode) return;
+        reloadReferralList();
+    }, [adminEmail, viewMode, isMockMode, reloadReferralList]);
+
     const handleLandingSave = async () => {
         if (!landingDraft) return;
         setLandingMsg('');
@@ -312,6 +416,140 @@ const SignupAdmin = () => {
             setLandingMsg(`儲存失敗：${e.message || e}`);
         } finally {
             setLandingSaving(false);
+        }
+    };
+
+    const openReferralCreate = () => {
+        setReferralCrudMode('create');
+        setReferralForm({
+            code: randomSignupRefCode8(),
+            referrerName: '',
+            upperReferrerName: '',
+        });
+        setReferralOpMsg('');
+    };
+
+    const openReferralEdit = (r) => {
+        setReferralCrudMode('edit');
+        setReferralForm({
+            code: r.code,
+            referrerName: r.referrerName,
+            upperReferrerName: r.upperReferrerName,
+        });
+        setReferralOpMsg('');
+    };
+
+    const cancelReferralCrud = () => {
+        setReferralCrudMode(null);
+        setReferralForm({ code: '', referrerName: '', upperReferrerName: '' });
+        setReferralOpMsg('');
+    };
+
+    const regenerateReferralCodeDraft = () => {
+        if (referralCrudMode !== 'create') return;
+        setReferralForm((p) => ({ ...p, code: randomSignupRefCode8() }));
+        setReferralOpMsg('已重新隨機產生網址代碼。');
+    };
+
+    const copyReferralUrlFromForm = async () => {
+        const code = referralForm.code.trim();
+        if (!/^[A-Za-z0-9]{8}$/.test(code)) {
+            setReferralOpMsg('請先輸入或產生 8 碼英數網址代碼。');
+            return;
+        }
+        const url = buildReferralPublicUrl(code);
+        try {
+            await navigator.clipboard.writeText(url);
+            setReferralOpMsg('完整推薦網址已複製到剪貼簿。');
+        } catch {
+            setReferralOpMsg(`無法自動複製，請手動複製：${url}`);
+        }
+    };
+
+    const copyReferralUrlByCode = async (code) => {
+        const url = buildReferralPublicUrl(code);
+        try {
+            await navigator.clipboard.writeText(url);
+            setReferralOpMsg('已複製該筆推薦網址。');
+        } catch {
+            setReferralOpMsg(`無法自動複製：${url}`);
+        }
+    };
+
+    const submitReferralForm = async () => {
+        setReferralOpMsg('');
+        if (!referralCrudMode) {
+            setReferralOpMsg('請先按「新增推薦連結」或從列表選擇「編輯」。');
+            return;
+        }
+        if (isMockMode) {
+            setReferralOpMsg('mock 模式無法寫入 Firestore。');
+            return;
+        }
+        const code = referralForm.code.trim();
+        if (!/^[A-Za-z0-9]{8}$/.test(code)) {
+            setReferralOpMsg('網址代碼須為 8 碼英數字，不可含空白或其他符號。');
+            return;
+        }
+        const referrerName = referralForm.referrerName.trim();
+        if (!referrerName) {
+            setReferralOpMsg('請填寫「推薦人姓名」。');
+            return;
+        }
+        const upperReferrerName = referralForm.upperReferrerName.trim();
+        const wasCreate = referralCrudMode === 'create';
+        setReferralSaving(true);
+        try {
+            const refDoc = doc(db, VIBE_REFERRAL_CODES_COLLECTION, code);
+            const existed = await getDoc(refDoc);
+            if (wasCreate && existed.exists()) {
+                setReferralOpMsg('此網址代碼已存在，請按「重新隨機產生代碼」或手動改成未使用的 8 碼。');
+                return;
+            }
+            if (!wasCreate && !existed.exists()) {
+                setReferralOpMsg('找不到此筆資料，可能已被刪除。請重新整理列表。');
+                await reloadReferralList();
+                return;
+            }
+            const payload = {
+                referrerName,
+                upperReferrerName,
+                updatedAt: serverTimestamp(),
+            };
+            if (!existed.exists()) {
+                payload.createdAt = serverTimestamp();
+            }
+            await setDoc(refDoc, payload, { merge: true });
+            await reloadReferralList();
+            setReferralCrudMode(null);
+            setReferralForm({ code: '', referrerName: '', upperReferrerName: '' });
+            setReferralOpMsg(wasCreate ? `已建立。推薦網址：${buildReferralPublicUrl(code)}` : `已更新「${code}」。`);
+        } catch (e) {
+            setReferralOpMsg(`儲存失敗：${e.message || e}`);
+        } finally {
+            setReferralSaving(false);
+        }
+    };
+
+    const deleteReferralRow = async (code) => {
+        if (isMockMode) {
+            setReferralOpMsg('mock 模式無法刪除。');
+            return;
+        }
+        const c = String(code || '').trim();
+        if (!window.confirm(`確定刪除代碼「${c}」？刪除後該連結即失效，已送出之報名紀錄不會自動變更。`)) {
+            return;
+        }
+        setReferralOpMsg('');
+        try {
+            await deleteDoc(doc(db, VIBE_REFERRAL_CODES_COLLECTION, c));
+            if (referralCrudMode === 'edit' && referralForm.code === c) {
+                cancelReferralCrud();
+            }
+            await reloadReferralList();
+            setReferralOpMsg(`已刪除「${c}」。`);
+        } catch (e) {
+            setReferralOpMsg(`刪除失敗：${e.message || e}`);
         }
     };
 
@@ -653,6 +891,7 @@ const SignupAdmin = () => {
         setEditTarget(reg);
         const isInvoiceEditable =
             (reg.registrationKind || 'main') !== 'refresher' && reg.invoiceType !== 'refresher_exempt';
+        const refParts = getRegistrationReferrerParts(reg);
         setEditForm({
             status: reg.status || 'pending',
             paymentMethod: reg.paymentMethod || 'transfer',
@@ -661,7 +900,9 @@ const SignupAdmin = () => {
             sessionId: reg.sessionId || selectedSession?.id || '',
             payee: reg.payee || '',
             invoiceType: isInvoiceEditable && reg.invoiceType === 'tax_id' ? 'tax_id' : 'general',
-            taxId: isInvoiceEditable && reg.taxId ? String(reg.taxId) : ''
+            taxId: isInvoiceEditable && reg.taxId ? String(reg.taxId) : '',
+            referrerName: refParts.referrerName,
+            upperReferrerName: refParts.upperReferrerName,
         });
         setIsEditRegOpen(true);
     };
@@ -692,6 +933,10 @@ const SignupAdmin = () => {
                 }
             }
 
+            const referrerNameTrim = String(editForm.referrerName || '').trim();
+            const upperReferrerTrim = String(editForm.upperReferrerName || '').trim();
+            const sourceMergedPatch = buildMergedReferrerSourceField(referrerNameTrim, upperReferrerTrim);
+
             if (isMockMode) {
                 if (willMoveToAnotherSession) {
                     setRegistrations(prev => prev.filter(r => r.id !== editTarget.id));
@@ -709,7 +954,10 @@ const SignupAdmin = () => {
                                 taxId: editForm.invoiceType === 'tax_id' ? String(editForm.taxId || '').trim() : null
                             }
                             : {}
-                        )
+                        ),
+                        referrerName: referrerNameTrim || null,
+                        upperReferrerName: upperReferrerTrim || null,
+                        source: sourceMergedPatch || referrerNameTrim || editTarget.source || '',
                     } : r));
                 }
                 setIsEditRegOpen(false);
@@ -747,6 +995,9 @@ const SignupAdmin = () => {
                     sessionDate: targetSession?.date || null,
                     sessionLocation: targetSession?.location || null,
                     sessionAddress: targetSession?.address || null,
+                    referrerName: referrerNameTrim || null,
+                    upperReferrerName: upperReferrerTrim || null,
+                    source: sourceMergedPatch || referrerNameTrim || editTarget.source || '',
                 }
             });
 
@@ -762,7 +1013,10 @@ const SignupAdmin = () => {
                         ? { receivedAmount: r.receivedAmount, payee: r.payee, paymentMethod: r.paymentMethod }
                         : { receivedAmount: Number(editForm.receivedAmount), payee: editForm.payee }
                     ),
-                    ...invoicePatch
+                    ...invoicePatch,
+                    referrerName: referrerNameTrim || null,
+                    upperReferrerName: upperReferrerTrim || null,
+                    source: sourceMergedPatch || referrerNameTrim || editTarget.source || '',
                 } : r));
             }
             setIsEditRegOpen(false);
@@ -1058,6 +1312,30 @@ const SignupAdmin = () => {
         }
     };
 
+    /** 名單表格：台灣時區、月/日 24 小時制（例：04/19 14:05） */
+    const formatRegistrationListTime = (value) => {
+        if (value == null || value === '') return '—';
+        try {
+            const d =
+                typeof value === 'object' && typeof value?.toDate === 'function'
+                    ? value.toDate()
+                    : new Date(value);
+            if (Number.isNaN(d.getTime())) return '—';
+            const parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Taipei',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            }).formatToParts(d);
+            const pick = (t) => parts.find((p) => p.type === t)?.value ?? '';
+            return `${pick('month')}/${pick('day')} ${pick('hour')}:${pick('minute')}`;
+        } catch {
+            return '—';
+        }
+    };
+
     const formatSessionDateTime = (session) => {
         if (!session?.date) return '-';
         try {
@@ -1144,10 +1422,13 @@ const SignupAdmin = () => {
     };
 
     const statusToLabel = (status) => {
-        if (status === 'confirmed') return '已確認';
+        if (status === 'confirmed') return '已付款';
         if (status === 'cancelled') return '已取消';
         return '待核對';
     };
+
+    /** 報到清除按鈕暫時關閉 */
+    const showClearCheckInButton = false;
 
     const escapeCsvCell = (value) => {
         const s = value === null || value === undefined ? '' : String(value);
@@ -1274,6 +1555,8 @@ const SignupAdmin = () => {
                 'Email',
                 '電話',
                 '來源',
+                '推薦人',
+                '上層推薦人',
                 '報名類型',
                 '前次參加場次',
                 '人數',
@@ -1293,6 +1576,8 @@ const SignupAdmin = () => {
             'Email',
             '電話',
             '來源',
+            '推薦人',
+            '上層推薦人',
             '電子發票/統編',
             '收款人',
             '報名類型',
@@ -1312,6 +1597,7 @@ const SignupAdmin = () => {
 
         const rows = displayedRegistrations.map((reg) => {
             const checkInUrl = reg.id ? buildCheckInUrl(reg.id) : '';
+            const refCsv = getRegistrationReferrerParts(reg);
             if (csvOmitPaymentColumns) {
                 return [
                     listKindLabel,
@@ -1321,6 +1607,8 @@ const SignupAdmin = () => {
                     reg.email || '',
                     reg.phone || '',
                     reg.source || '',
+                    refCsv.referrerName || '',
+                    refCsv.upperReferrerName || '',
                     (reg.registrationKind || 'main') === 'refresher' ? '複訓' : '正課',
                     [reg.previousSessionTitle, reg.previousSessionDate].filter(Boolean).join(' '),
                     reg.count ?? 1,
@@ -1341,6 +1629,8 @@ const SignupAdmin = () => {
                 reg.email || '',
                 reg.phone || '',
                 reg.source || '',
+                refCsv.referrerName || '',
+                refCsv.upperReferrerName || '',
                 formatInvoiceForCsv(reg),
                 reg.payee || '',
                 (reg.registrationKind || 'main') === 'refresher' ? '複訓' : '正課',
@@ -1594,6 +1884,231 @@ const SignupAdmin = () => {
                                                 </div>
                                             </div>
                                         </div>
+
+                                        <section className="flex flex-col gap-4 rounded-xl border border-emerald-200 bg-emerald-50/35 p-4 md:p-6" aria-labelledby="referral-crud-heading">
+                                            <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                                <div>
+                                                    <h3 id="referral-crud-heading" className="text-lg font-bold text-slate-800">
+                                                        推薦連結管理
+                                                    </h3>
+                                                    <p className="text-xs text-slate-600 mt-1 leading-relaxed max-w-3xl">
+                                                        對應 Firestore{' '}
+                                                        <code className="bg-white/80 px-1 rounded border border-emerald-100 text-[11px]">{VIBE_REFERRAL_CODES_COLLECTION}</code>
+                                                        ：每個 8 碼為一筆資料（可多筆並存）。
+                                                        學員開啟 <code className="bg-white/80 px-1 rounded border border-emerald-100 text-[11px]">?ref=</code>{' '}
+                                                        會自動依該筆帶入「來源」並隱藏手選。
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    disabled={isMockMode || referralCrudMode !== null}
+                                                    onClick={openReferralCreate}
+                                                    title={referralCrudMode !== null ? '請先完成或取消目前表單' : ''}
+                                                    className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow disabled:opacity-45 disabled:cursor-not-allowed"
+                                                >
+                                                    新增推薦連結
+                                                </button>
+                                            </header>
+
+                                            {referralCrudMode && (
+                                                <div className="rounded-xl border border-slate-200 bg-white p-4 md:p-5 shadow-sm">
+                                                    <h4 className="text-base font-bold text-slate-800 mb-4">
+                                                        {referralCrudMode === 'create' ? '新增「推薦連結」' : `編輯「${referralForm.code || '—'}」`}
+                                                    </h4>
+                                                    <div className="flex flex-col gap-4">
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 md:col-span-1">
+                                                                網址代碼（8 碼英數字）
+                                                                <input
+                                                                    type="text"
+                                                                    inputMode="text"
+                                                                    autoComplete="off"
+                                                                    spellCheck={false}
+                                                                    maxLength={8}
+                                                                    disabled={referralCrudMode === 'edit'}
+                                                                    value={referralForm.code}
+                                                                    onChange={(e) =>
+                                                                        setReferralForm((prev) => ({
+                                                                            ...prev,
+                                                                            code: e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 8),
+                                                                        }))
+                                                                    }
+                                                                    className={`font-mono text-sm px-3 py-2 rounded-lg border border-slate-200 tracking-wide ${referralCrudMode === 'edit' ? 'bg-slate-100 text-slate-600' : 'bg-white'}`}
+                                                                    placeholder="8 碼"
+                                                                />
+                                                            </label>
+                                                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 md:col-span-1">
+                                                                推薦人姓名
+                                                                <input
+                                                                    type="text"
+                                                                    value={referralForm.referrerName}
+                                                                    onChange={(e) =>
+                                                                        setReferralForm((prev) => ({ ...prev, referrerName: e.target.value }))
+                                                                    }
+                                                                    placeholder="例如：Rich老師"
+                                                                    className="font-normal text-sm px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                                                                />
+                                                            </label>
+                                                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 md:col-span-1">
+                                                                上層推薦人（選填）
+                                                                <input
+                                                                    type="text"
+                                                                    value={referralForm.upperReferrerName}
+                                                                    onChange={(e) =>
+                                                                        setReferralForm((prev) => ({
+                                                                            ...prev,
+                                                                            upperReferrerName: e.target.value,
+                                                                        }))
+                                                                    }
+                                                                    placeholder="將寫入「推薦人（上層：○○）」"
+                                                                    className="font-normal text-sm px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center sm:justify-between">
+                                                            <code
+                                                                className="text-[11px] bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg break-all text-slate-700"
+                                                                title="完整報名連結預覽"
+                                                            >
+                                                                {referralForm.code && /^[A-Za-z0-9]{8}$/.test(referralForm.code.trim())
+                                                                    ? buildReferralPublicUrl(referralForm.code.trim())
+                                                                    : `${PUBLIC_SIGNUP_CHECKIN_ORIGIN}${REFERRAL_SIGNUP_PUBLIC_PATH}?ref=________`}
+                                                            </code>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {referralCrudMode === 'create' ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={isMockMode}
+                                                                        onClick={regenerateReferralCodeDraft}
+                                                                        className="bg-slate-700 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                                                                    >
+                                                                        重新隨機代碼
+                                                                    </button>
+                                                                ) : null}
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={isMockMode}
+                                                                    onClick={copyReferralUrlFromForm}
+                                                                    className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                                                                >
+                                                                    複製網址
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={referralSaving}
+                                                                    onClick={cancelReferralCrud}
+                                                                    className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold"
+                                                                >
+                                                                    取消
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    disabled={referralSaving || isMockMode}
+                                                                    onClick={submitReferralForm}
+                                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-50"
+                                                                >
+                                                                    {referralSaving ? '處理中…' : referralCrudMode === 'create' ? '建立' : '更新'}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {referralOpMsg ? (
+                                                <div className="text-slate-800 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap">
+                                                    {referralOpMsg}
+                                                </div>
+                                            ) : null}
+
+                                            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                                                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/90 flex flex-wrap items-center gap-2 justify-between">
+                                                    <h4 className="text-sm font-bold text-slate-800">推薦連結列表</h4>
+                                                    <span className="text-xs text-slate-500">
+                                                        {referralListLoading ? '載入中…' : `共 ${referralList.length} 筆`}
+                                                    </span>
+                                                </div>
+                                                <div className="overflow-x-auto">
+                                                    {referralListLoading ? (
+                                                        <div className="px-4 py-8 text-center text-sm text-slate-500">載入資料中…</div>
+                                                    ) : referralList.length === 0 ? (
+                                                        <div className="px-4 py-8 text-center text-sm text-slate-500">
+                                                            尚未建立任何推薦連結。請按右上角「新增推薦連結」建立第一筆。
+                                                        </div>
+                                                    ) : (
+                                                        <table className="min-w-full text-sm text-left border-collapse">
+                                                            <thead>
+                                                                <tr className="border-b border-slate-100 bg-slate-50/50">
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 whitespace-nowrap">
+                                                                        網址代碼
+                                                                    </th>
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600">
+                                                                        推薦人
+                                                                    </th>
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 hidden sm:table-cell">
+                                                                        上層
+                                                                    </th>
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 min-w-[180px]">
+                                                                        連結預覽
+                                                                    </th>
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 text-right whitespace-nowrap">
+                                                                        操作
+                                                                    </th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {referralList.map((r) => {
+                                                                    const url = buildReferralPublicUrl(r.code);
+                                                                    return (
+                                                                        <tr key={r.code} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/80">
+                                                                            <td className="px-3 py-2.5 align-top">
+                                                                                <span className="font-mono font-bold text-slate-900">{r.code}</span>
+                                                                            </td>
+                                                                            <td className="px-3 py-2.5 align-top text-slate-800">{r.referrerName || '—'}</td>
+                                                                            <td className="px-3 py-2.5 align-top text-slate-600 hidden sm:table-cell">
+                                                                                {r.upperReferrerName || '—'}
+                                                                            </td>
+                                                                            <td className="px-3 py-2.5 align-top">
+                                                                                <span className="text-xs text-slate-500 max-w-[14rem] sm:max-w-xs inline-block truncate" title={url}>
+                                                                                    {url}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="px-3 py-2.5 align-top">
+                                                                                <div className="flex flex-wrap justify-end gap-1.5">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => copyReferralUrlByCode(r.code)}
+                                                                                        className="text-xs font-bold text-sky-700 hover:text-sky-900 px-2 py-1 rounded-lg border border-sky-200 bg-sky-50"
+                                                                                    >
+                                                                                        複製
+                                                                                    </button>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        disabled={referralCrudMode !== null}
+                                                                                        onClick={() => openReferralEdit(r)}
+                                                                                        className="text-xs font-bold text-emerald-800 hover:text-emerald-950 px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 disabled:opacity-40"
+                                                                                    >
+                                                                                        編輯
+                                                                                    </button>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        disabled={referralCrudMode !== null || isMockMode}
+                                                                                        onClick={() => deleteReferralRow(r.code)}
+                                                                                        className="text-xs font-bold text-rose-700 hover:text-rose-900 px-2 py-1 rounded-lg border border-rose-200 bg-rose-50 disabled:opacity-40"
+                                                                                    >
+                                                                                        刪除
+                                                                                    </button>
+                                                                                </div>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </section>
 
                                         {landingMsg ? (
                                             <div className="text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm whitespace-pre-wrap">
@@ -1873,7 +2388,7 @@ const SignupAdmin = () => {
                                             className="inline-flex items-center justify-center gap-2 rounded-lg border border-violet-300 bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                                             title="以 Resend 寄出報到 HTML 信給目前清單所有有效 Email（已排除已取消）"
                                         >
-                                            寄送通知信
+                                            全部寄送通知
                                         </button>
                                         <button
                                             type="button"
@@ -1895,7 +2410,7 @@ const SignupAdmin = () => {
                                                     <th className="p-3 font-semibold min-w-[180px]">學員</th>
                                                     {!isRefresherListTab && (
                                                     <>
-                                                    <th className="p-3 font-semibold min-w-[90px]">發票</th>
+                                                    <th className="p-3 font-semibold min-w-[100px]">推薦人</th>
                                                     <th className="p-3 font-semibold w-[70px]">收款</th>
                                                     <th className="p-3 font-semibold min-w-[90px]">付款</th>
                                                     <th className="p-3 font-semibold min-w-[100px]">金額 / 備註</th>
@@ -1903,6 +2418,7 @@ const SignupAdmin = () => {
                                                     )}
                                                     {isRefresherListTab && (
                                                         <>
+                                                        <th className="p-3 font-semibold min-w-[100px]">推薦人</th>
                                                         <th className="p-3 font-semibold min-w-[200px]">前次報名場次</th>
                                                         <th className="p-3 font-semibold min-w-[100px]">備註</th>
                                                         </>
@@ -1913,12 +2429,12 @@ const SignupAdmin = () => {
                                             </thead>
                                             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
                                                 {displayedRegistrations.length === 0 ? (
-                                                    <tr><td colSpan={isRefresherListTab ? 6 : 8} className="p-8 text-center text-slate-400">此分類尚無報名資料</td></tr>
+                                                    <tr><td colSpan={isRefresherListTab ? 7 : 8} className="p-8 text-center text-slate-400">此分類尚無報名資料</td></tr>
                                                 ) : displayedRegistrations.map((reg) => {
                                                     const previousSessionText = getRefresherPreviousSessionText(reg);
                                                     return (
                                                     <tr key={reg.id} className={`hover:bg-slate-50 transition-colors ${reg.status === 'cancelled' ? 'opacity-50 grayscale bg-slate-50' : ''}`}>
-                                                        <td className="p-3 text-slate-500 text-xs align-top">{formatDate(reg.createdAt)}</td>
+                                                        <td className="p-3 text-slate-500 text-xs align-top whitespace-nowrap font-mono">{formatRegistrationListTime(reg.createdAt)}</td>
                                                         <td className="p-3 align-top">
                                                             <div className="font-bold text-slate-800 inline-flex items-center gap-2">
                                                                 <span>{reg.name}</span>
@@ -1926,9 +2442,7 @@ const SignupAdmin = () => {
                                                                     <span className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">已核對身份</span>
                                                                 )}
                                                             </div>
-                                                            {reg.email && <div className="text-xs text-slate-600 break-all max-w-[220px] mt-0.5">{reg.email}</div>}
                                                             <div className="font-mono text-xs text-slate-500 mt-0.5">{reg.phone}</div>
-                                                            {!isRefresherListTab && <div className="mt-1 text-xs text-blue-600 bg-blue-50 inline-block px-1 rounded">{reg.source}</div>}
                                                             {!isRefresherListTab && reg.registrationKind === 'refresher' && (reg.previousSessionTitle || reg.previousSessionDate) && (
                                                                 <div className="text-[10px] text-slate-600 mt-1">前次：{reg.previousSessionTitle || reg.previousSessionDate || '—'}</div>
                                                             )}
@@ -1942,14 +2456,26 @@ const SignupAdmin = () => {
                                                         </td>
                                                         {!isRefresherListTab && (
                                                         <>
-                                                        <td className="p-3 text-xs text-slate-700 align-top">
-                                                            {reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt' ? (
-                                                                <span className="text-slate-500">複訓不填</span>
-                                                            ) : reg.invoiceType === 'tax_id' && reg.taxId ? (
-                                                                <><span className="font-mono font-semibold text-slate-900">{reg.taxId}</span><span className="block text-[10px] text-slate-500">統編</span></>
-                                                            ) : (
-                                                                <span className="text-slate-500">一般</span>
-                                                            )}
+                                                        <td className="p-3 text-xs text-slate-700 align-top max-w-[200px]">
+                                                            {(() => {
+                                                                const pr = getRegistrationReferrerParts(reg);
+                                                                const main = pr.referrerName || reg.source || '';
+                                                                if (!main && !pr.upperReferrerName) {
+                                                                    return <span className="text-slate-400">—</span>;
+                                                                }
+                                                                return (
+                                                                    <div className="space-y-1">
+                                                                        {main ? (
+                                                                            <div className="text-xs text-blue-800 bg-blue-50 border border-blue-100 rounded px-1.5 py-1 break-words">{main}</div>
+                                                                        ) : null}
+                                                                        {pr.upperReferrerName ? (
+                                                                            <div className="text-[10px] text-violet-900 bg-violet-50 border border-violet-100 rounded px-1.5 py-0.5 break-words">
+                                                                                上層：{pr.upperReferrerName}
+                                                                            </div>
+                                                                        ) : null}
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                         </td>
                                                         <td className="p-3 text-sm align-top">{reg.payee ? <span className="font-bold text-amber-900">{reg.payee}</span> : <span className="text-slate-300">—</span>}</td>
                                                         <td className="p-3 align-top">
@@ -1967,11 +2493,37 @@ const SignupAdmin = () => {
                                                                 )}
                                                             </div>
                                                             {reg.adminNote && <div className="text-xs text-slate-500 mt-1 max-w-[150px] truncate" title={reg.adminNote}>{reg.adminNote}</div>}
+                                                            {(reg.invoiceType === 'tax_id' && reg.taxId && reg.registrationKind !== 'refresher' && reg.invoiceType !== 'refresher_exempt') ? (
+                                                                <div className="text-[11px] font-mono text-slate-800 mt-1.5 border-t border-slate-100 pt-1">
+                                                                    統編 {reg.taxId}
+                                                                </div>
+                                                            ) : null}
                                                         </td>
                                                         </>
                                                         )}
                                                         {isRefresherListTab && (
                                                             <>
+                                                            <td className="p-3 text-xs text-slate-700 align-top max-w-[200px]">
+                                                                {(() => {
+                                                                    const pr = getRegistrationReferrerParts(reg);
+                                                                    const main = pr.referrerName || reg.source || '';
+                                                                    if (!main && !pr.upperReferrerName) {
+                                                                        return <span className="text-slate-400">—</span>;
+                                                                    }
+                                                                    return (
+                                                                        <div className="space-y-1">
+                                                                            {main ? (
+                                                                                <div className="text-xs text-blue-800 bg-blue-50 border border-blue-100 rounded px-1.5 py-1 break-words">{main}</div>
+                                                                            ) : null}
+                                                                            {pr.upperReferrerName ? (
+                                                                                <div className="text-[10px] text-violet-900 bg-violet-50 border border-violet-100 rounded px-1.5 py-0.5 break-words">
+                                                                                    上層：{pr.upperReferrerName}
+                                                                                </div>
+                                                                            ) : null}
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                            </td>
                                                             <td className="p-3 align-top text-xs text-slate-700 max-w-[220px]">
                                                                 <span className="line-clamp-4" title={previousSessionText !== '—' ? previousSessionText : undefined}>{previousSessionText}</span>
                                                             </td>
@@ -1985,7 +2537,7 @@ const SignupAdmin = () => {
                                                                 reg.status === 'cancelled' ? 'bg-red-100 text-red-800' :
                                                                     'bg-yellow-100 text-yellow-800'
                                                                 }`}>
-                                                                {reg.status === 'confirmed' ? '已確認' : reg.status === 'cancelled' ? '已取消' : '待核對'}
+                                                                {reg.status === 'confirmed' ? '已付款' : reg.status === 'cancelled' ? '已取消' : '待核對'}
                                                             </span>
                                                             {reg.checkInAt ? (
                                                                 <div className="mt-1.5 text-[11px] font-medium text-slate-600">
@@ -1995,8 +2547,8 @@ const SignupAdmin = () => {
                                                                 <div className="mt-1.5 text-[11px] text-slate-400">尚未報到</div>
                                                             )}
                                                             {reg.attendanceConfirmedAt && (
-                                                                <div className="mt-1.5 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                                                                    已確認出席
+                                                                <div className="mt-1.5 inline-flex rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                                                                    會出席
                                                                 </div>
                                                             )}
                                                         </td>
@@ -2015,17 +2567,17 @@ const SignupAdmin = () => {
                                                                     className="px-3 py-1 bg-violet-600 border border-violet-600 rounded text-xs text-white hover:bg-violet-500 font-bold disabled:cursor-not-allowed disabled:opacity-50"
                                                                     title="透過 Resend 寄送與「全部送出」相同之 HTML 報到信（含確認出席連結）"
                                                                 >
-                                                                    寄報到信
+                                                                    寄送通知
                                                                 </button>
                                                                 <button
                                                                     onClick={() => copyCheckInLink(reg)}
                                                                     className="px-3 py-1 bg-emerald-600 border border-emerald-600 rounded text-xs text-white hover:bg-emerald-700 font-bold"
                                                                     title="複製報到 QR 頁面連結"
                                                                 >
-                                                                    複製報到
+                                                                    複製
                                                                 </button>
                                                                 
-                                                                {reg.status !== 'cancelled' && (
+                                                                {showClearCheckInButton && reg.status !== 'cancelled' && (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => handleClearCheckInInfo(reg)}
@@ -2072,7 +2624,7 @@ const SignupAdmin = () => {
                                                         key={reg.id}
                                                         className={`bg-slate-50 border border-slate-200 rounded-xl p-3 ${reg.status === 'cancelled' ? 'opacity-60 grayscale' : ''}`}
                                                     >
-                                                        <div className="text-[11px] leading-snug text-slate-500">{formatDate(reg.createdAt)}</div>
+                                                        <div className="text-[11px] leading-snug text-slate-500 font-mono">{formatRegistrationListTime(reg.createdAt)}</div>
                                                         <div className="mt-0.5 flex items-start justify-between gap-2 min-w-0">
                                                             <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                                                                 <span className="font-bold text-slate-800 text-sm shrink-0">{reg.name}</span>
@@ -2082,23 +2634,34 @@ const SignupAdmin = () => {
                                                                 {reg.registrationKind === 'refresher' && !isRefresherListTab && (
                                                                     <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1 rounded">複訓</span>
                                                                 )}
-                                                                {reg.email && <span className="text-[10px] text-slate-500 break-all w-full">{reg.email}</span>}
-                                                                <span className="font-mono text-[11px] text-slate-500 break-all">{reg.phone}</span>
+                                                                <span className="font-mono text-[11px] text-slate-500 break-all w-full">{reg.phone}</span>
                                                             </div>
-                                                            <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
-                                                                {!isRefresherListTab && (
-                                                                <span className="text-[10px] leading-tight text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-px rounded whitespace-nowrap">
-                                                                    {reg.source || '—'}
-                                                                </span>
-                                                                )}
+                                                            <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
                                                                 <span className={`text-[10px] leading-tight inline-flex items-center px-1.5 py-px rounded font-bold whitespace-nowrap ${reg.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                                                                     reg.status === 'cancelled' ? 'bg-red-100 text-red-800' :
                                                                         'bg-yellow-100 text-yellow-800'
                                                                     }`}>
-                                                                    {reg.status === 'confirmed' ? '已確認' : reg.status === 'cancelled' ? '已取消' : '待核對'}
+                                                                    {reg.status === 'confirmed' ? '已付款' : reg.status === 'cancelled' ? '已取消' : '待核對'}
                                                                 </span>
                                                             </div>
                                                         </div>
+                                                        {(() => {
+                                                            const pr = getRegistrationReferrerParts(reg);
+                                                            const main = pr.referrerName || reg.source;
+                                                            if (!main && !pr.upperReferrerName) return null;
+                                                            return (
+                                                                <div className="mt-1.5 flex flex-wrap gap-1 items-start">
+                                                                    {main ? (
+                                                                        <span className="text-[10px] text-blue-800 bg-blue-50 border border-blue-100 px-1.5 py-px rounded max-w-full break-words">推薦：{main}</span>
+                                                                    ) : null}
+                                                                    {pr.upperReferrerName ? (
+                                                                        <span className="text-[9px] text-violet-900 bg-violet-50 border border-violet-100 px-1.5 py-px rounded max-w-full break-words">
+                                                                            上層：{pr.upperReferrerName}
+                                                                        </span>
+                                                                    ) : null}
+                                                                </div>
+                                                            );
+                                                        })()}
 
                                                         {(reg.sessionId === 'time_not_available' || reg.isTimeNotAvailable) && (
                                                             <div className="mt-2 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1.5">
@@ -2108,16 +2671,11 @@ const SignupAdmin = () => {
                                                             </div>
                                                         )}
 
-                                                        {!isRefresherListTab && (
-                                                        <div className="mt-1.5 text-[11px] text-slate-600">
-                                                            <span className="text-slate-500">發票</span>：
-                                                            {reg.registrationKind === 'refresher' || reg.invoiceType === 'refresher_exempt'
-                                                                ? '複訓不填'
-                                                                : (reg.invoiceType === 'tax_id' && reg.taxId ? <span className="font-mono">統編 {reg.taxId}</span> : '一般')}
-                                                            {reg.payee && (
-                                                                <span className="ml-2"><span className="text-slate-500">收款</span>：<span className="font-bold text-amber-900">{reg.payee}</span></span>
-                                                            )}
-                                                        </div>
+                                                        {!isRefresherListTab && reg.payee && (
+                                                            <div className="mt-1.5 text-[11px] text-slate-600">
+                                                                <span className="text-slate-500">收款</span>：
+                                                                <span className="font-bold text-amber-900">{reg.payee}</span>
+                                                            </div>
                                                         )}
                                                         {reg.registrationKind === 'refresher' && (reg.previousSessionTitle || reg.previousSessionDate) && (
                                                             <div className="mt-0.5 text-[10px] text-slate-600">前次：{reg.previousSessionTitle || reg.previousSessionDate}</div>
@@ -2148,6 +2706,11 @@ const SignupAdmin = () => {
                                                                     <span className="text-slate-500">備註</span>：{reg.adminNote}
                                                                 </span>
                                                             ) : null}
+                                                            {(reg.invoiceType === 'tax_id' && reg.taxId && reg.registrationKind !== 'refresher' && reg.invoiceType !== 'refresher_exempt') ? (
+                                                                <span className="w-full text-[11px] font-mono text-slate-800 border-t border-slate-200 pt-1 mt-1">
+                                                                    統編 {reg.taxId}
+                                                                </span>
+                                                            ) : null}
                                                         </div>
                                                         )}
 
@@ -2160,7 +2723,9 @@ const SignupAdmin = () => {
                                                             )}
                                                         </div>
                                                         {reg.attendanceConfirmedAt && (
-                                                            <div className="mt-1 text-[10px] font-bold text-emerald-700">已確認出席</div>
+                                                            <div className="mt-1 inline-flex rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                                                                會出席
+                                                            </div>
                                                         )}
 
                                                         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
@@ -2198,7 +2763,7 @@ const SignupAdmin = () => {
                                                                 刪除
                                                             </button>
                                                         </div>
-                                                        {reg.status !== 'cancelled' && (
+                                                        {showClearCheckInButton && reg.status !== 'cancelled' && (
                                                             <div className="mt-2 flex flex-col gap-2">
                                                                 <button
                                                                     type="button"
@@ -2208,6 +2773,10 @@ const SignupAdmin = () => {
                                                                 >
                                                                     清除報到資訊
                                                                 </button>
+                                                            </div>
+                                                        )}
+                                                        {reg.status !== 'cancelled' && (
+                                                            <div className="mt-2 flex flex-col gap-2">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleQuickCancel(reg)}
@@ -2385,11 +2954,36 @@ const SignupAdmin = () => {
                             </div>
 
                             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-6 py-4 space-y-4">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3 space-y-3">
+                                    <p className="text-xs font-bold text-slate-700">推薦來源</p>
+                                    <label className="block text-xs font-semibold text-slate-600 mb-1">推薦人（等同「來源」主欄位）</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.referrerName}
+                                        onChange={(e) => setEditForm({ ...editForm, referrerName: e.target.value })}
+                                        className="w-full border border-slate-200 p-2 rounded-lg text-sm bg-white"
+                                        placeholder="例如：嘉吉老師、FB 廣告"
+                                    />
+                                    <label className="block text-xs font-semibold text-slate-600 mb-1">上層推薦人</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.upperReferrerName}
+                                        onChange={(e) => setEditForm({ ...editForm, upperReferrerName: e.target.value })}
+                                        className="w-full border border-slate-200 p-2 rounded-lg text-sm bg-white"
+                                        placeholder="選填；有上線時填寫"
+                                    />
+                                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                                        儲存時會寫入欄位 <code className="bg-white px-1 rounded border text-[10px]">referrerName</code>、
+                                        <code className="bg-white px-1 rounded border text-[10px]">upperReferrerName</code>，並同步更新合併欄{' '}
+                                        <code className="bg-white px-1 rounded border text-[10px]">來源（source）</code>（供舊報表對照）。
+                                    </p>
+                                </div>
+
                                 <div>
                                     <label className="block text-sm font-bold text-slate-600 mb-1">狀態</label>
                                     <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} className="w-full border p-2 rounded">
                                         <option value="pending">待核對 (Pending)</option>
-                                        <option value="confirmed">已確認 (Confirmed)</option>
+                                        <option value="confirmed">已付款 (Confirmed)</option>
                                         <option value="cancelled">已取消 (Cancelled)</option>
                                     </select>
                                 </div>
