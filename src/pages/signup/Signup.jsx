@@ -8,7 +8,25 @@ import liff from '@line/liff';
 // Placeholder LIFF ID - User needs to replace this
 const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka'; // e.g., @123xxxxx (Must include @ if using R/oaMessage/ID, usually needs @)
-const BUNNY_VIDEO_EMBED_URL = 'https://player.mediadelivery.net/embed/621248/77e09d16-cfb7-4f70-95bc-b038682b3fcb';
+
+/** 學員回饋影片（YouTube Shorts），流量由 YouTube 承載；排序：原先第二支為首（主影片 autoplay） */
+const PROMO_YOUTUBE_VIDEOS = [
+    { id: 'ea3_moV1XQk', label: '學員真心回饋 ①' },
+    { id: 'PRAX2uy1jHs', label: '學員真心回饋 ②' },
+];
+
+const SIGNUP_HERO_IMAGE = '/S__158801977.jpg';
+
+function buildYoutubeShortEmbedSrc(videoId, { muted, autoplay }) {
+    const q = new URLSearchParams({
+        playsinline: '1',
+        rel: '0',
+        modestbranding: '1',
+        mute: muted ? '1' : '0',
+    });
+    if (autoplay) q.set('autoplay', '1');
+    return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${q.toString()}`;
+}
 
 /** 台灣手機：09 開頭、僅 10 碼數字（不接受符號或連字號） */
 const isValidTaiwanMobileDigits = (phone) => /^09\d{8}$/.test(String(phone).trim());
@@ -103,7 +121,7 @@ const Signup = () => {
     const [customSource, setCustomSource] = useState('');
 
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const seoImage = `${siteOrigin}/signup.jpg`;
+    const seoImage = `${siteOrigin}${SIGNUP_HERO_IMAGE}`;
     const seoUrl = `${siteOrigin}/vibe`;
 
     /**
@@ -665,13 +683,12 @@ const Signup = () => {
                                     看課程介紹
                                 </a>
                             </div>
-                        </div>
 
-                        <div className="space-y-4">
-                            <article className="bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 overflow-hidden">
+                            {/* 電腦版：海報置於左欄、立即報名下方；手機版同一欄自然排在按鈕之後 */}
+                            <article className="mt-6 bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 overflow-hidden">
                                 <div className="relative">
                                     <img
-                                        src="/signup.jpg"
+                                        src={SIGNUP_HERO_IMAGE}
                                         alt="AI落地師培訓班活動海報"
                                         className="w-full h-auto"
                                         loading="lazy"
@@ -679,10 +696,13 @@ const Signup = () => {
                                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/35 via-transparent to-transparent" />
                                 </div>
                             </article>
+                        </div>
+
+                        <div className="space-y-4">
                             <article className="bg-white/75 backdrop-blur rounded-3xl shadow-xl border border-white/60 p-4 sm:p-6">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="text-left">
-                                        <h2 className="text-lg font-black text-slate-900">來聽聽同學怎麼說</h2>
+                                        <h2 className="text-lg font-black text-slate-900">學員真心回饋</h2>
                                         <p className="mt-1 text-sm text-slate-600">記得開聲音</p>
                                     </div>
                                     <button
@@ -693,18 +713,28 @@ const Signup = () => {
                                         {isVideoMuted ? '開聲音' : '已開聲音'}
                                     </button>
                                 </div>
-                                <div className="mt-4 overflow-hidden rounded-2xl bg-slate-100">
-                                    {/* 直式 9:16 影片比例：height/width = 16/9 => paddingTop 約 177.78% */}
-                                    <div style={{ position: 'relative', paddingTop: '177.78%' }}>
-                                        <iframe
-                                            src={`${BUNNY_VIDEO_EMBED_URL}?autoplay=true&loop=false&muted=${isVideoMuted ? 'true' : 'false'}&preload=true&responsive=true`}
-                                            loading="lazy"
-                                            style={{ border: 0, position: 'absolute', top: 0, height: '100%', width: '100%' }}
-                                            title="AI落地師培訓班課程介紹"
-                                            allow="accelerometer;gyroscope;autoplay;encrypted-media;picture-in-picture;"
-                                            allowFullScreen
-                                        />
-                                    </div>
+                                <div className="mt-4 flex flex-col gap-6">
+                                    {PROMO_YOUTUBE_VIDEOS.map((v, idx) => (
+                                        <div key={v.id} className="overflow-hidden rounded-2xl bg-slate-100">
+                                            <p className="px-3 py-2 text-xs font-bold text-slate-600 bg-slate-200/80">{v.label}</p>
+                                            {/* Shorts 直式約 9:16 */}
+                                            <div style={{ position: 'relative', paddingTop: '177.78%' }}>
+                                                <iframe
+                                                    key={`${v.id}-${isVideoMuted}`}
+                                                    src={buildYoutubeShortEmbedSrc(v.id, {
+                                                        muted: isVideoMuted,
+                                                        autoplay: idx === 0,
+                                                    })}
+                                                    loading={idx === 0 ? 'eager' : 'lazy'}
+                                                    style={{ border: 0, position: 'absolute', top: 0, height: '100%', width: '100%' }}
+                                                    title={v.label}
+                                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                    referrerPolicy="strict-origin-when-cross-origin"
+                                                    allowFullScreen
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </article>
                         </div>

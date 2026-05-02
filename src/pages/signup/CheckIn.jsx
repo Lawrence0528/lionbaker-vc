@@ -12,7 +12,7 @@ const CheckIn = () => {
     const [registration, setRegistration] = useState(null);
 
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const seoImage = `${siteOrigin}/signup.jpg`;
+    const seoImage = `${siteOrigin}/S__158801977.jpg`;
     const seoUrl = `${siteOrigin}/signup/checkin/${uid || ''}`;
 
     const qrSrc = useMemo(() => {

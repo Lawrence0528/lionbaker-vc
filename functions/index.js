@@ -757,9 +757,13 @@ function parseRegistrationDate(value) {
     return null;
 }
 
+/** 與前台報到頁一致：固定在台灣時區（Functions 預設為 UTC，若不指定 timeZone 會少 8 小時） */
+const DISPLAY_TIME_ZONE = "Asia/Taipei";
+
 function formatTwDateTime(d) {
     if (!d) return "-";
     return d.toLocaleString("zh-TW", {
+        timeZone: DISPLAY_TIME_ZONE,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
