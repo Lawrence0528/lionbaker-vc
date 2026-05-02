@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import SEO from '../../components/SEO';
 
 const CheckIn = () => {
     const { uid } = useParams();
+    const [searchParams] = useSearchParams();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [registration, setRegistration] = useState(null);
@@ -97,6 +98,21 @@ const CheckIn = () => {
             ? 'text-rose-300 border-rose-300/40 bg-rose-500/10'
             : 'text-amber-300 border-amber-300/40 bg-amber-500/10';
 
+    const attendanceConfirmedFromUrl = searchParams.get('attendance') === 'confirmed';
+    const attendanceConfirmedAt = registration?.attendanceConfirmedAt;
+    const hasAttendanceRecord = !!(attendanceConfirmedAt || attendanceConfirmedFromUrl);
+
+    const locationDisplay = useMemo(() => {
+        const loc = String(registration?.sessionLocation || '').trim();
+        const addr = String(registration?.sessionAddress || '').trim();
+        if (!loc && !addr) return '-';
+        if (loc && addr) return `${loc}（${addr}）`;
+        return loc || addr;
+    }, [registration?.sessionLocation, registration?.sessionAddress]);
+
+    const isRefresherCourse = registration?.registrationKind === 'refresher';
+    const courseKindLabel = isRefresherCourse ? '複訓' : '正課';
+
     return (
         <main className="relative min-h-screen overflow-hidden bg-slate-950 px-4 py-6 text-slate-100 sm:py-8">
             <SEO
@@ -123,6 +139,12 @@ const CheckIn = () => {
                     <p className="mt-2 text-sm text-slate-300">現場請出示此頁面，讓工作人員掃描完成報到。</p>
                 </header>
 
+                {!loading && !error && hasAttendanceRecord && (
+                    <div className="mb-4 rounded-2xl border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 text-center text-sm font-semibold text-emerald-100 shadow-lg">
+                        已確認出席，感謝您；現場請仍出示此 QR 完成報到。
+                    </div>
+                )}
+
                 {loading && (
                     <article className="rounded-3xl border border-white/15 bg-white/10 p-8 shadow-2xl backdrop-blur-xl">
                         <div className="flex flex-col items-center gap-3 py-6">
@@ -141,8 +163,15 @@ const CheckIn = () => {
                 {!loading && !error && (
                     <div className="flex flex-col gap-4">
                         <article className="rounded-3xl border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl">
-                            <div className="mb-4 flex items-center justify-between">
-                                <span className="text-xs font-bold tracking-[0.2em] text-slate-300">AI落地師通行證 AI-PASS</span>
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-xs font-bold tracking-[0.2em] text-slate-300">
+                                    AI落地師通行證 AI-PASS
+                                    <span
+                                        className={`ml-2 inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-black tracking-wide ${isRefresherCourse ? 'border-violet-400/70 bg-violet-600/35 text-violet-50' : 'border-amber-500 bg-gradient-to-b from-yellow-300 to-amber-400 text-amber-950 shadow-[0_0_18px_rgba(251,191,36,0.55)]'}`}
+                                    >
+                                        {courseKindLabel}
+                                    </span>
+                                </span>
                                 <span className={`rounded-full border px-3 py-1 text-xs font-bold ${statusClass}`}>{statusText}</span>
                             </div>
                             <div className="mx-auto w-fit rounded-2xl border border-white/20 bg-white p-3 shadow-lg shadow-cyan-500/10">
@@ -158,7 +187,7 @@ const CheckIn = () => {
                                 <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2"><span className="font-bold text-slate-400">電話：</span>{registration?.phone || '-'}</div>
                                 <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2"><span className="font-bold text-slate-400">場次：</span>{registration?.sessionTitle || '-'}</div>
                                 <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2"><span className="font-bold text-slate-400">上課時間：</span>{`${formatDate(registration?.sessionDate)}（${formatCheckInTime(registration?.sessionDate).split(' ').pop()}開放報到）`}</div>
-                                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2"><span className="font-bold text-slate-400">地點：</span>{registration?.sessionLocation ? `${registration.sessionLocation}（台中市中區民族路 23 號 3 樓）` : '-'}</div>
+                                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2"><span className="font-bold text-slate-400">地點：</span>{locationDisplay}</div>
                             </div>
                         </article>
 
@@ -167,17 +196,8 @@ const CheckIn = () => {
                             <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-100">
                                 <li>建議提早 15 分鐘到場，方便現場簽到與入座。</li>
                                 <li>請先把手機充飽電，並攜帶行動電源。</li>
-                                <li>請先安裝 Gemini App，現場可直接實作。</li>
+                                <li>請先安裝 Gemini App，現場可直接操作。</li>
                                 <li>課程長達 3.5 小時，建議攜帶個人水杯隨時補充水分。</li>
-                            </ul>
-                        </article>
-
-                        <article className="rounded-3xl border border-violet-300/20 bg-violet-500/10 p-5 shadow-2xl backdrop-blur-xl">
-                            <h2 className="mb-3 text-base font-bold text-violet-100">交通建議</h2>
-                            <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-100">
-                                <li>火車：鄰近台中火車站，步行約 5-8 分鐘可抵達。</li>
-                                <li>公車：可搭乘往台中車站方向，於「台中車站」或「民權繼光街口」下車。</li>
-                                <li>開車/騎車：周邊有民權路收費停車場及路邊停車格。</li>
                             </ul>
                         </article>
                     </div>

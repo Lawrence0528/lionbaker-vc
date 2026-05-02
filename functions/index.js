@@ -2,11 +2,35 @@ const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https")
 const admin = require("firebase-admin");
 const express = require("express");
 const cors = require("cors");
+const crypto = require("crypto");
+const { defineSecret, defineString } = require("firebase-functions/params");
+const { Resend } = require("resend");
 
 admin.initializeApp();
 const db = admin.firestore();
 
 const ADMIN_EMAIL = "charge0528@gmail.com";
+
+/** Resend API Key（部署後請設定 secrets） */
+const resendApiKey = defineSecret("RESEND_API_KEY");
+/** 用於「確認出席」連結 HMAC，請勿外洩 */
+const attendanceConfirmSecret = defineSecret("ATTENDANCE_CONFIRM_SECRET");
+// Resend：from 必須為 ASCII；需為已在 Resend 驗證過的網域（見 defineString 預設）
+const resendFromEmail = defineString("RESEND_FROM_EMAIL", {
+    default: "LionBaker <noreply@mail.lionbaker.com>",
+});
+const vibePublicOrigin = defineString("VIBE_PUBLIC_ORIGIN", {
+    default: "https://ai.lionbaker.com",
+});
+
+/** Resend API 免費／測試檔常為每秒 2 封；批次循環須間隔以免 429 */
+const RESEND_BATCH_MIN_INTERVAL_MS = 550;
+
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
 
 async function assertAdmin(context) {
     if (!context?.auth?.uid) {
@@ -701,6 +725,368 @@ exports.deleteVibeRegistration = onCall(async (request) => {
     await db.collection(VIBE_REGISTRATIONS_COL).doc(String(registrationId)).delete();
     return { success: true };
 });
+
+// -----------------------------
+// 報到通知信（Resend）與「確認出席」公開連結
+// -----------------------------
+
+function signAttendanceLink(registrationId, secret) {
+    return crypto.createHmac("sha256", String(secret)).update(String(registrationId)).digest("hex");
+}
+
+function safeTimingEqualHex(expectedHex, providedSig) {
+    try {
+        const a = Buffer.from(String(expectedHex), "hex");
+        const b = Buffer.from(String(providedSig), "hex");
+        if (a.length !== b.length || a.length === 0) return false;
+        return crypto.timingSafeEqual(a, b);
+    } catch {
+        return false;
+    }
+}
+
+function parseRegistrationDate(value) {
+    if (!value) return null;
+    if (typeof value === "string") {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    if (value && typeof value.toDate === "function") {
+        return value.toDate();
+    }
+    return null;
+}
+
+function formatTwDateTime(d) {
+    if (!d) return "-";
+    return d.toLocaleString("zh-TW", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+}
+
+function paymentBadgeLabel(status) {
+    if (status === "confirmed") return "已完成付款";
+    if (status === "cancelled") return "已取消";
+    return "未完成付款";
+}
+
+function escapeHtml(s) {
+    return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function buildLocationLine(reg) {
+    const loc = String(reg.sessionLocation || "").trim() || "—";
+    const addr = String(reg.sessionAddress || "").trim();
+    return addr ? `${loc}（${addr}）` : loc;
+}
+
+function buildCheckInPassEmailHtml(opts) {
+    const {
+        name,
+        phone,
+        sessionTitle,
+        sessionDateFormatted,
+        checkInOpenClock,
+        locationLine,
+        uid,
+        qrImgUrl,
+        checkInUrl,
+        confirmUrl,
+        paymentLabel,
+        isRefresher = false,
+    } = opts;
+
+    const esc = escapeHtml;
+    const kindLabel = isRefresher ? "複訓" : "正課";
+    /** 僅 QR 卡標題旁一顆標籤：複訓紫、正課亮橘黃 */
+    const kindPillStyle = isRefresher
+        ? "font-weight:900;color:#ede9fe;border:1px solid rgba(167,139,250,0.85);background:rgba(109,40,217,0.4);padding:4px 14px;border-radius:999px;font-size:12px;letter-spacing:0.06em;"
+        : "font-weight:900;color:#422006;border:1px solid #f59e0b;background:linear-gradient(180deg,#fde047,#fbbf24);padding:4px 14px;border-radius:999px;font-size:12px;letter-spacing:0.06em;box-shadow:0 0 14px rgba(251,191,36,0.65);";
+
+    return `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f172a;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" style="max-width:440px;">
+<tr><td style="padding:0 0 20px 0;text-align:center;">
+<a href="${esc(confirmUrl)}" style="display:inline-block;background:linear-gradient(180deg,#059669,#047857);color:#ffffff;text-decoration:none;font-weight:800;font-size:17px;padding:16px 36px;border-radius:14px;box-shadow:0 8px 24px rgba(5,150,105,0.35);">確認出席</a>
+<p style="margin:14px 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">請點擊上方按鈕，我們將記錄您已確認將出席本場次。<br/>若無法點擊，請複製連結至瀏覽器開啟：<br/><span style="word-break:break-all;color:#cbd5e1;">${esc(confirmUrl)}</span></p>
+</td></tr>
+<tr><td style="text-align:center;padding:4px 0 16px;">
+<span style="display:inline-block;border:1px solid rgba(34,211,238,0.35);background:rgba(34,211,238,0.12);color:#a5f3fc;font-size:11px;font-weight:700;letter-spacing:0.12em;padding:6px 14px;border-radius:999px;">CHECK-IN PASS</span>
+<h1 style="margin:14px 0 8px;font-size:26px;font-weight:900;color:#ffffff;">報到 QR 碼</h1>
+<p style="margin:0;font-size:14px;color:#cbd5e1;line-height:1.55;">現場請出示報到頁面，由工作人員掃描完成報到。</p>
+</td></tr>
+<tr><td style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:22px;padding:20px;">
+<table role="presentation" width="100%"><tr>
+<td style="font-size:11px;font-weight:800;color:#cbd5e1;letter-spacing:0.08em;">AI 落地師通行證 AI-PASS　<span style="${kindPillStyle}">${esc(kindLabel)}</span></td>
+<td align="right"><span style="display:inline-block;border-radius:999px;padding:5px 12px;font-size:11px;font-weight:800;border:1px solid rgba(52,211,153,0.45);background:rgba(16,185,129,0.12);color:#6ee7b7;">${esc(paymentLabel)}</span></td>
+</tr></table>
+<div style="text-align:center;margin:18px 0 10px;">
+<a href="${esc(checkInUrl)}" style="display:inline-block;background:#ffffff;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,0.15);">
+<img src="${esc(qrImgUrl)}" alt="報到 QR 碼" width="260" height="260" style="display:block;border-radius:10px;"/>
+</a>
+</div>
+<p style="margin:0;text-align:center;font-size:11px;color:#94a3b8;word-break:break-all;">UID：${esc(uid)}</p>
+<p style="margin:14px 0 0;text-align:center;font-size:12px;"><a href="${esc(checkInUrl)}" style="color:#22d3ee;">開啟報到頁面（含 QR）</a></p>
+</td></tr>
+<tr><td style="height:16px;"></td></tr>
+<tr><td style="background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:20px;">
+<h2 style="margin:0 0 14px;font-size:16px;font-weight:800;color:#67e8f9;">報到資訊</h2>
+<table role="presentation" width="100%" style="font-size:14px;color:#e2e8f0;">
+<tr><td style="padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);margin-bottom:8px;display:block;"><strong style="color:#94a3b8;">姓名</strong>　${esc(name)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);display:block;"><strong style="color:#94a3b8;">電話</strong>　${esc(phone)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);display:block;"><strong style="color:#94a3b8;">場次</strong>　${esc(sessionTitle)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);display:block;"><strong style="color:#94a3b8;">上課時間</strong>　${esc(sessionDateFormatted)}（${esc(checkInOpenClock)}開放報到）</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);display:block;"><strong style="color:#94a3b8;">地點</strong>　${esc(locationLine)}</td></tr>
+</table>
+</td></tr>
+<tr><td style="height:16px;"></td></tr>
+<tr><td style="background:rgba(6,182,212,0.12);border:1px solid rgba(34,211,238,0.25);border-radius:22px;padding:20px;">
+<h2 style="margin:0 0 12px;font-size:16px;font-weight:800;color:#cffafe;">行前提醒</h2>
+<ul style="margin:0;padding-left:20px;font-size:14px;color:#e2e8f0;line-height:1.65;">
+<li>建議提早 15 分鐘到場，方便現場簽到與入座。</li>
+<li>請先將手機充飽電，並攜帶行動電源。</li>
+<li>請先安裝 Gemini App，現場可直接操作。</li>
+<li>課程長達 3.5 小時，建議攜帶個人水杯隨時補充水分。</li>
+</ul>
+</td></tr>
+<tr><td style="padding:24px 8px 8px;text-align:center;font-size:11px;color:#64748b;line-height:1.5;">此信由系統自動發送。如需協助請回信或聯絡主辦單位。</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>`;
+}
+
+function isValidEmail(email) {
+    const s = String(email || "").trim();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+/** 寄出一封報到通行證 HTML（與批次／單筆共用） */
+async function sendCheckInPassEmailOnce(resend, from, origin, secret, reg) {
+    const sessionDateObj = parseRegistrationDate(reg.sessionDate);
+    const sessionDateFormatted = formatTwDateTime(sessionDateObj);
+    let checkInOpenClock = "-";
+    if (sessionDateObj) {
+        const open = new Date(sessionDateObj.getTime() - 30 * 60 * 1000);
+        checkInOpenClock = formatTwDateTime(open).split(" ").pop() || "-";
+    }
+
+    const locationLine = buildLocationLine(reg);
+    const checkInUrl = `${origin}/signup/checkin/${encodeURIComponent(reg.id)}`;
+    const confirmUrl = `${origin}/signup/confirm-attendance?rid=${encodeURIComponent(reg.id)}&sig=${encodeURIComponent(signAttendanceLink(reg.id, secret))}`;
+    const qrPayload = encodeURIComponent(reg.id);
+    const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=20&data=${qrPayload}`;
+
+    const html = buildCheckInPassEmailHtml({
+        name: reg.name || "-",
+        phone: reg.phone || "-",
+        sessionTitle: reg.sessionTitle || "-",
+        sessionDateFormatted,
+        checkInOpenClock,
+        locationLine,
+        uid: reg.id,
+        qrImgUrl,
+        checkInUrl,
+        confirmUrl,
+        paymentLabel: paymentBadgeLabel(reg.status),
+        isRefresher: reg.registrationKind === "refresher",
+    });
+
+    const kindBracket = reg.registrationKind === "refresher" ? "〔複訓〕" : "〔正課〕";
+    const subject = `【AI落地師培訓班】${kindBracket}報到 QR 與行前提醒（${String(reg.name || "").trim() || "學員"}）`;
+
+    return await resend.emails.send({
+        from,
+        to: String(reg.email).trim(),
+        subject,
+        html,
+    });
+}
+
+/**
+ * 管理員：單筆寄送報到通行證（HTML）。data: { registrationId }
+ */
+exports.sendVibeCheckInEmailSingle = onCall(
+    {
+        secrets: [resendApiKey, attendanceConfirmSecret],
+    },
+    async (request) => {
+        await assertAdmin(request);
+        const { registrationId } = request.data || {};
+        if (!registrationId) {
+            throw new HttpsError("invalid-argument", "缺少 registrationId。");
+        }
+
+        const snap = await db.collection(VIBE_REGISTRATIONS_COL).doc(String(registrationId)).get();
+        if (!snap.exists) {
+            throw new HttpsError("not-found", "找不到報名資料。");
+        }
+
+        const reg = { id: snap.id, ...(snap.data() || {}) };
+        if (String(reg.status || "") === "cancelled") {
+            throw new HttpsError("failed-precondition", "已取消的報名無法寄送通知信。");
+        }
+        if (!isValidEmail(reg.email)) {
+            throw new HttpsError("invalid-argument", "此筆報名沒有有效的 Email。");
+        }
+
+        const origin = vibePublicOrigin.value().replace(/\/$/, "");
+        const secret = attendanceConfirmSecret.value();
+        const from = resendFromEmail.value();
+        const resend = new Resend(resendApiKey.value());
+
+        try {
+            const { error } = await sendCheckInPassEmailOnce(resend, from, origin, secret, reg);
+            if (error) {
+                throw new HttpsError("internal", error.message || "Resend 寄送失敗。");
+            }
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            throw new HttpsError("internal", e.message || String(e));
+        }
+
+        return { success: true };
+    }
+);
+
+/**
+ * 管理員：批次寄送報到通行證（HTML）。
+ * data: { sessionId, listKind?: 'main' | 'refresher' }
+ */
+exports.sendVibeCheckInEmailsBatch = onCall(
+    {
+        secrets: [resendApiKey, attendanceConfirmSecret],
+        timeoutSeconds: 360,
+    },
+    async (request) => {
+        await assertAdmin(request);
+        const { sessionId, listKind } = request.data || {};
+        if (!sessionId) throw new HttpsError("invalid-argument", "缺少 sessionId。");
+        const kind = listKind === "refresher" ? "refresher" : "main";
+
+        const snap = await db.collection(VIBE_REGISTRATIONS_COL).where("sessionId", "==", String(sessionId)).get();
+
+        const regs = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) })).filter((r) => {
+            if (String(r.status || "") === "cancelled") return false;
+            if (!isValidEmail(r.email)) return false;
+            const rk = r.registrationKind || "main";
+            if (kind === "main") return rk === "main";
+            return rk === "refresher";
+        });
+
+        if (regs.length === 0) {
+            return { sent: 0, skipped: 0, failures: [], message: "沒有符合條件的信箱可寄送（已排除已取消與無 Email）。" };
+        }
+
+        const origin = vibePublicOrigin.value().replace(/\/$/, "");
+        const secret = attendanceConfirmSecret.value();
+        const from = resendFromEmail.value();
+        const resend = new Resend(resendApiKey.value());
+
+        const failures = [];
+        let sent = 0;
+
+        for (let i = 0; i < regs.length; i++) {
+            const reg = regs[i];
+            if (i > 0) {
+                await sleep(RESEND_BATCH_MIN_INTERVAL_MS);
+            }
+            try {
+                const { error } = await sendCheckInPassEmailOnce(resend, from, origin, secret, reg);
+                if (error) {
+                    failures.push({ id: reg.id, email: reg.email, error: error.message || String(error) });
+                } else {
+                    sent += 1;
+                }
+            } catch (e) {
+                failures.push({ id: reg.id, email: reg.email, error: e.message || String(e) });
+            }
+        }
+
+        const warnings = [];
+        const errBlob = failures.map((f) => String(f.error || "")).join("\n");
+        if (/verify a domain|your own email address|onboarding@resend\.dev|testing emails/i.test(errBlob)) {
+            warnings.push(
+                "【Resend 網域】測試寄件只能寄到 Resend 登入帳號信箱。若要寄給學員：請至 https://resend.com/domains 驗證網域，並將 Firebase 參數 RESEND_FROM_EMAIL 設為該網域地址（純英文寄件顯示名），例如 LionBaker <notify@你的網域>。"
+            );
+        }
+        if (/Too many requests|2 requests per second|rate limit/i.test(errBlob)) {
+            warnings.push(
+                "【Resend 頻率】系統已自動節流；若仍失敗請稍後分批重試或向 Resend 申請提高限制。"
+            );
+        }
+
+        return {
+            sent,
+            failures,
+            totalCandidates: regs.length,
+            warnings,
+        };
+    }
+);
+
+/** 學員由信件連結點選「確認出席」：寫入 attendanceConfirmedAt 後導向報到頁 */
+exports.confirmVibeAttendanceLink = onRequest(
+    {
+        secrets: [attendanceConfirmSecret],
+    },
+    async (req, res) => {
+        res.set("Cache-Control", "no-store");
+        if (req.method === "OPTIONS") {
+            res.status(204).send("");
+            return;
+        }
+        const rid = String(req.query.rid || "").trim();
+        const sig = String(req.query.sig || "").trim();
+        const secret = attendanceConfirmSecret.value();
+        const origin = vibePublicOrigin.value().replace(/\/$/, "");
+
+        if (!rid || !sig || !secret) {
+            res.status(400).type("html").send("<!DOCTYPE html><html lang=\"zh-Hant\"><meta charset=\"utf-8\"/><body style=\"font-family:sans-serif;background:#0f172a;color:#e2e8f0;padding:24px;\">參數不完整。</body></html>");
+            return;
+        }
+
+        const expected = signAttendanceLink(rid, secret);
+        if (!safeTimingEqualHex(expected, sig)) {
+            res.status(403).type("html").send("<!DOCTYPE html><html lang=\"zh-Hant\"><meta charset=\"utf-8\"/><body style=\"font-family:sans-serif;background:#0f172a;color:#e2e8f8;padding:24px;\">連結無效，請改由最新信件重新開啟。</body></html>");
+            return;
+        }
+
+        const ref = db.collection(VIBE_REGISTRATIONS_COL).doc(rid);
+        const doc = await ref.get();
+        if (!doc.exists) {
+            res.status(404).type("html").send("<!DOCTYPE html><html lang=\"zh-Hant\"><meta charset=\"utf-8\"/><body style=\"font-family:sans-serif;background:#0f172a;color:#e2e8f8;padding:24px;\">找不到報名資料。</body></html>");
+            return;
+        }
+
+        await ref.set(
+            {
+                attendanceConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+        );
+
+        res.redirect(302, `${origin}/signup/checkin/${encodeURIComponent(rid)}?attendance=confirmed`);
+    }
+);
 
 exports.renderSandbox = onRequest(async (req, res) => {
     try {

@@ -6,6 +6,9 @@ import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
 
+/** 報到 QR 連結一律使用此生產網域（勿跟瀏覽器網址列走 firebase hosting 預設網域） */
+const PUBLIC_SIGNUP_CHECKIN_ORIGIN = 'https://ai.lionbaker.com';
+
 const REFRESHER_FEE = 500;
 const DEFAULT_REFRESHER_MAX = 10;
 const PAYEE_OPTIONS = ['', '嘉吉', '偉志', '白白'];
@@ -24,6 +27,43 @@ const getRefresherPreviousSessionText = (reg) => {
         return String(reg.previousSessionDate);
     }
     return '—';
+};
+
+/**
+ * 複訓身份檢查：依學員填報的「前次場次」對應 vibe_sessions 文件 ID。
+ * 優先 previousSessionId；舊資料無 ID 時再以 previousSessionTitle（及同標題多場時配合 previousSessionDate）推斷。
+ */
+const resolveRefresherCompareSessionId = (reg, sessionList) => {
+    const pid = reg.previousSessionId != null ? String(reg.previousSessionId).trim() : '';
+    if (pid) return pid;
+
+    const title = (reg.previousSessionTitle || '').trim();
+    if (!title) return '';
+
+    const normTitle = (t) => String(t || '').trim();
+    const hits = sessionList.filter((s) => normTitle(s.title) === title);
+
+    if (hits.length === 1) return hits[0].id;
+
+    if (hits.length > 1 && reg.previousSessionDate) {
+        const targetMs = new Date(reg.previousSessionDate).getTime();
+        if (!Number.isNaN(targetMs)) {
+            let bestId = '';
+            let bestDiff = Infinity;
+            for (const h of hits) {
+                const ms = new Date(h.date).getTime();
+                if (Number.isNaN(ms)) continue;
+                const diff = Math.abs(ms - targetMs);
+                if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestId = h.id;
+                }
+            }
+            if (bestId) return bestId;
+        }
+    }
+
+    return hits[0]?.id || '';
 };
 
 /** 身份比對用：去空白、轉小寫、手機僅留數字 */
@@ -97,7 +137,6 @@ const SignupAdmin = () => {
         invoiceType: 'general',
         taxId: ''
     });
-    const [identityVerifySessionId, setIdentityVerifySessionId] = useState('');
     const [identityVerifiedMap, setIdentityVerifiedMap] = useState({});
 
     useEffect(() => {
@@ -225,12 +264,12 @@ const SignupAdmin = () => {
         setViewMode('registrations');
         setRegistrationListTab('main');
         setIdentityVerifiedMap({});
-        setIdentityVerifySessionId('');
         try {
             if (isMockMode) {
                 const mockRegs = [
                     {
                         id: 'mock_reg_01',
+                        sessionId: session.id,
                         createdAt: new Date().toISOString(),
                         name: '王小明',
                         email: 'ming@example.com',
@@ -248,6 +287,7 @@ const SignupAdmin = () => {
                     },
                     {
                         id: 'mock_reg_02',
+                        sessionId: session.id,
                         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
                         name: '陳小華',
                         email: 'hua@example.com',
@@ -263,10 +303,12 @@ const SignupAdmin = () => {
                         taxId: '04595202',
                         payee: '白白',
                         registrationKind: 'refresher',
+                        previousSessionId: 'mock_session_01',
                         previousSessionTitle: 'AI落地師培訓班（本地假資料）',
                     },
                     {
                         id: 'mock_reg_03',
+                        sessionId: session.id,
                         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
                         name: '林小美',
                         email: 'mei@example.com',
@@ -693,11 +735,11 @@ const SignupAdmin = () => {
     };
 
     const buildCheckInUrl = (registrationId) => {
-        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
+        const origin = PUBLIC_SIGNUP_CHECKIN_ORIGIN.replace(/\/$/, '');
         return `${origin}/signup/checkin/${registrationId}`;
     };
 
-    /** 與「複製報到」相同內文、主旨，供剪貼簿與 mailto / Gmail 帶用 */
+    /** 與「複製報到」相同純文字內文、主旨（備援／剪貼簿用） */
     const buildCheckInMessage = (reg) => {
         if (!reg?.id) return null;
         const url = buildCheckInUrl(reg.id);
@@ -729,6 +771,7 @@ const SignupAdmin = () => {
         const sessionLocationText = addr ? `${loc}（${addr}）` : loc;
 
         const isRef = reg.registrationKind === 'refresher';
+        const kindLabelPlain = isRef ? '複訓' : '正課';
         const listPrice = isRef ? REFRESHER_FEE : (selectedSession?.price ?? 0);
         const feeLine = reg.status === 'pending'
             ? (isRef
@@ -740,6 +783,7 @@ const SignupAdmin = () => {
 
         const text = [
             '【AI落地師培訓班｜報到資訊】',
+            `報名類型：${kindLabelPlain}`,
             `學員：${reg.name || '-'}`,
             `場次：${reg.sessionTitle || selectedSession?.title || '-'}`,
             `上課時間：${sessionTimeText}（${checkInTimeText}開放報到）`,
@@ -750,7 +794,7 @@ const SignupAdmin = () => {
             '請於現場出示此頁面 QR 碼完成報到。'
         ].join('\n');
 
-        const subject = `【AI落地師培訓班】報到資訊（${(reg.name || '-').trim()}）`;
+        const subject = `【AI落地師培訓班】〔${kindLabelPlain}〕報到資訊（${(reg.name || '-').trim()}）`;
         return { text, subject };
     };
 
@@ -769,55 +813,87 @@ const SignupAdmin = () => {
         }
     };
 
-    /**
-     * 先同步開新分頁到 Gmail 撰寫（避免在 async/await 後被擋彈出視窗），接著寫入剪貼簿。
-     * 網址帶 to / su / body；過長則只帶 to、su，內文以剪貼簿為準。
-     */
-    const copyAndOpenGmailCompose = (reg) => {
+    /** 透過 Cloud Functions + Resend 批次寄送報到 HTML 信（含「確認出席」連結） */
+    const handleSendAllCheckInEmailsResend = async () => {
+        if (!selectedSession || selectedSession.id === 'time_not_available') {
+            alert('請先選擇一般場次名單頁。');
+            return;
+        }
+        const kind = registrationListTab === 'refresher' ? 'refresher' : 'main';
+        const candidates = displayedRegistrations.filter(
+            (r) => r.status !== 'cancelled' && String(r.email || '').trim().includes('@')
+        );
+        if (candidates.length === 0) {
+            alert('目前清單沒有可寄送的 Email（已排除已取消與空白信箱）。');
+            return;
+        }
+        const tabLabel = kind === 'main' ? '正課' : '複訓';
+        if (
+            !window.confirm(
+                `即將透過 Resend 寄出「報到 QR／行前提醒」HTML 信件給 ${candidates.length} 位學員（${tabLabel}；不含「已取消」）。\n寄件前請確認已於 Firebase 設定 RESEND_API_KEY、ATTENDANCE_CONFIRM_SECRET，並完成網域／寄件者設定。\n\n確定送出？`
+            )
+        ) {
+            return;
+        }
+        if (isMockMode) {
+            alert(`（本地 mock）模擬寄送 ${candidates.length} 封，未呼叫雲端函式。`);
+            return;
+        }
+        setOpLoading(true);
+        try {
+            const fn = httpsCallable(functions, 'sendVibeCheckInEmailsBatch');
+            const result = await fn({ sessionId: selectedSession.id, listKind: kind });
+            const data = result?.data || {};
+            const sent = data.sent ?? 0;
+            const failures = Array.isArray(data.failures) ? data.failures : [];
+            const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+            if (failures.length > 0) {
+                console.warn('Resend 部分失敗：', failures);
+            }
+            let msg = `寄送結果：成功 ${sent} 封。${failures.length ? `失敗 ${failures.length} 封（詳見瀏覽器 Console）。` : ''}`;
+            if (warnings.length > 0) {
+                msg += `\n\n${warnings.join('\n\n')}`;
+            }
+            alert(msg);
+        } catch (err) {
+            console.error(err);
+            alert(`寄送失敗：${err.message || err}`);
+        } finally {
+            setOpLoading(false);
+        }
+    };
+
+    /** 單筆：與「全部送出」相同之 Resend HTML 報到信 */
+    const handleSendOneCheckInEmailResend = async (reg) => {
+        if (!reg?.id) return;
+        if (reg.status === 'cancelled') {
+            alert('已取消的報名無法寄送通知信。');
+            return;
+        }
         const to = (reg?.email || '').trim();
         if (!to || !to.includes('@')) {
             alert('此學員未填寫有效 Email。');
             return;
         }
-        const built = buildCheckInMessage(reg);
-        if (!built) {
-            alert('無法產生報到連結：缺少 UID');
+        if (isMockMode) {
+            alert('（本地 mock）未實際呼叫 Resend。');
             return;
         }
-        const { text, subject } = built;
-        const base = 'https://mail.google.com/mail/?view=cm&fs=1';
-        const withBody = `${base}&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
-        const GMAIL_URL_SAFE_MAX = 2000;
-        const useBody = withBody.length <= GMAIL_URL_SAFE_MAX;
-        const openUrl = useBody ? withBody : `${base}&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}`;
-
-        const w = window.open(openUrl, '_blank');
-        if (!w) {
-            void navigator.clipboard.writeText(text).then(
-                () => {
-                    alert('彈出視窗被攔截。內文已複製，請手動開啟 Gmail 並貼上。');
-                },
-                () => {
-                    alert('無法開啟分頁且剪貼簿寫入失敗，請改用「複製報到」。');
-                }
-            );
+        if (!window.confirm(`確定以 Resend 寄出「報到 QR／行前提醒」HTML 信給 ${(reg.name || '').trim() || '學員'}（${to}）？`)) {
             return;
         }
-        w.opener = null;
-
-        void navigator.clipboard.writeText(text).then(
-            () => {
-                if (useBody) {
-                    alert('已開啟 Gmail 撰寫視窗，內文已寫入剪貼簿（多數情況連結也會帶入正文，若沒有再貼上即可）。');
-                } else {
-                    alert('內文已複製。因內文過長，Gmail 只帶入收件人與主旨，請在正文中按 ⌘V 或 Ctrl+V 貼上。');
-                }
-            },
-            (e) => {
-                console.error(e);
-                alert('已開啟 Gmail，但剪貼簿寫入失敗。請在畫面中從內文區複製內文，或改用「複製報到」。');
-            }
-        );
+        setOpLoading(true);
+        try {
+            const fn = httpsCallable(functions, 'sendVibeCheckInEmailSingle');
+            await fn({ registrationId: reg.id });
+            alert('已送出信件。');
+        } catch (err) {
+            console.error(err);
+            const msg = err?.message || String(err);
+            alert(`寄送失敗：${msg}`);
+        } finally {
+            setOpLoading(false);
+        }
     };
 
     const formatDate = (value) => {
@@ -944,10 +1020,6 @@ const SignupAdmin = () => {
             alert('請先進入一般場次的名單頁，再執行身份檢查。');
             return;
         }
-        if (!identityVerifySessionId) {
-            alert('請先選擇要比對的場次。');
-            return;
-        }
         const refresherRegs = displayedRegistrations.filter((r) => (r.registrationKind || '') === 'refresher');
         if (refresherRegs.length === 0) {
             alert('目前複訓名單沒有可檢查的學員。');
@@ -956,34 +1028,76 @@ const SignupAdmin = () => {
 
         setOpLoading(true);
         try {
-            let targetRegs = [];
-            if (isMockMode) {
-                targetRegs = registrations;
-            } else {
-                const getRegFn = httpsCallable(functions, 'getVibeRegistrations');
-                const result = await getRegFn({ sessionId: identityVerifySessionId });
-                targetRegs = result?.data?.registrations || [];
-            }
+            const getRegFn = !isMockMode ? httpsCallable(functions, 'getVibeRegistrations') : null;
+            const rosterCache = {};
 
-            const verified = {};
-            const candidates = Array.isArray(targetRegs) ? targetRegs : [];
-            refresherRegs.forEach((reg) => {
-                const regName = normalizeIdentityText(reg.name);
-                const regEmail = normalizeIdentityText(reg.email);
-                const regPhone = normalizePhoneDigits(reg.phone);
-                if (!regName || !regEmail || !regPhone) return;
+            const loadMainRoster = async (sessionId) => {
+                const sid = String(sessionId);
+                if (rosterCache[sid]) return rosterCache[sid];
+                let list = [];
+                if (isMockMode) {
+                    list = registrations.filter((r) => r.sessionId === sid);
+                } else {
+                    const result = await getRegFn({ sessionId: sid });
+                    list = result?.data?.registrations || [];
+                }
+                const main = (Array.isArray(list) ? list : []).filter(
+                    (r) =>
+                        String(r.status || '') !== 'cancelled' &&
+                        (r.registrationKind || 'main') === 'main'
+                );
+                rosterCache[sid] = main;
+                return main;
+            };
 
-                const matched = candidates.some((target) => {
-                    const tName = normalizeIdentityText(target.name);
-                    const tEmail = normalizeIdentityText(target.email);
-                    const tPhone = normalizePhoneDigits(target.phone);
-                    return regName === tName && regEmail === tEmail && regPhone === tPhone;
-                });
-                if (matched && reg.id) verified[reg.id] = true;
+            const pairs = refresherRegs.map((reg) => ({
+                reg,
+                compareSid: resolveRefresherCompareSessionId(reg, sortedSessions),
+            }));
+
+            const skippedNoSession = pairs.filter((p) => !p.compareSid);
+            const skippedIncomplete = pairs.filter((p) => {
+                if (!p.compareSid) return false;
+                const regEmail = normalizeIdentityText(p.reg.email);
+                const regPhone = normalizePhoneDigits(p.reg.phone);
+                return !regEmail && !regPhone;
             });
 
+            const uniqueIds = [...new Set(pairs.map((p) => p.compareSid).filter(Boolean))];
+            await Promise.all(uniqueIds.map((id) => loadMainRoster(id)));
+
+            const verified = {};
+            for (const { reg, compareSid } of pairs) {
+                if (!compareSid) continue;
+                const regEmail = normalizeIdentityText(reg.email);
+                const regPhone = normalizePhoneDigits(reg.phone);
+                const hasEmail = !!regEmail;
+                const hasPhone = !!regPhone;
+                if (!hasEmail && !hasPhone) continue;
+
+                const candidates = rosterCache[compareSid] || [];
+                const matched = candidates.some((target) => {
+                    const tEmail = normalizeIdentityText(target.email);
+                    const tPhone = normalizePhoneDigits(target.phone);
+                    const emailOk = hasEmail && !!tEmail && regEmail === tEmail;
+                    const phoneOk = hasPhone && !!tPhone && regPhone === tPhone;
+                    return emailOk || phoneOk;
+                });
+                if (matched && reg.id) verified[reg.id] = true;
+            }
+
             setIdentityVerifiedMap(verified);
-            alert(`身份檢查完成：共 ${Object.keys(verified).length} 位已核對身份。`);
+
+            const lines = [
+                `身份檢查完成：與前次場次正課名單比對（Email 或手機任一相符即成立），共 ${Object.keys(verified).length} 位符合。`,
+            ];
+            if (skippedNoSession.length > 0) {
+                lines.push(`無法對應前次場次（無場次 ID 且標題亦對不到）：略過 ${skippedNoSession.length} 位。`);
+            }
+            if (skippedIncomplete.length > 0) {
+                lines.push(`Email 與手機皆空白，無法比對：略過 ${skippedIncomplete.length} 位。`);
+            }
+            alert(lines.join('\n'));
         } catch (err) {
             alert(`身份檢查失敗: ${err.message}`);
         } finally {
@@ -1418,31 +1532,30 @@ const SignupAdmin = () => {
                                     )}
                                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 px-4 py-3 border-b border-slate-200 bg-slate-50">
                                         {isRefresherListTab && (
-                                            <>
-                                                <select
-                                                    value={identityVerifySessionId}
-                                                    onChange={(e) => setIdentityVerifySessionId(e.target.value)}
-                                                    className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
-                                                >
-                                                    <option value="">選擇要比對的場次</option>
-                                                    {sortedSessions
-                                                        .filter((s) => s.id !== selectedSession?.id)
-                                                        .map((s) => (
-                                                            <option key={s.id} value={s.id}>
-                                                                {s.title}｜{new Date(s.date).toLocaleDateString('zh-TW')} {new Date(s.date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                                            </option>
-                                                        ))}
-                                                </select>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleBatchVerifyRefresherIdentity}
-                                                    disabled={opLoading || displayedRegistrations.length === 0}
-                                                    className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-800 shadow-sm transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    一鍵檢查身份
-                                                </button>
-                                            </>
+                                            <button
+                                                type="button"
+                                                onClick={handleBatchVerifyRefresherIdentity}
+                                                disabled={opLoading || displayedRegistrations.length === 0}
+                                                className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-800 shadow-sm transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                title="依填報的前次場次載入該場正課名單（不含已取消）；複訓列與名單若 Email 相同或手機相同即視為符合；無 previousSessionId 時會用場次標題對應"
+                                            >
+                                                一鍵檢查身份
+                                            </button>
                                         )}
+                                        <button
+                                            type="button"
+                                            onClick={handleSendAllCheckInEmailsResend}
+                                            disabled={
+                                                opLoading ||
+                                                displayedRegistrations.length === 0 ||
+                                                !selectedSession ||
+                                                selectedSession.id === 'time_not_available'
+                                            }
+                                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-violet-300 bg-violet-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                            title="以 Resend 寄出報到 HTML 信給目前清單所有有效 Email（已排除已取消）"
+                                        >
+                                            寄送通知信
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={handleExportRegistrationsCsv}
@@ -1562,6 +1675,11 @@ const SignupAdmin = () => {
                                                             ) : (
                                                                 <div className="mt-1.5 text-[11px] text-slate-400">尚未報到</div>
                                                             )}
+                                                            {reg.attendanceConfirmedAt && (
+                                                                <div className="mt-1.5 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                                                    已確認出席
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-4">
                                                             <div className="flex flex-wrap gap-2">
@@ -1573,12 +1691,12 @@ const SignupAdmin = () => {
                                                                 </button>
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => copyAndOpenGmailCompose(reg)}
-                                                                    disabled={!reg.email}
+                                                                    onClick={() => handleSendOneCheckInEmailResend(reg)}
+                                                                    disabled={opLoading || !reg.email || reg.status === 'cancelled'}
                                                                     className="px-3 py-1 bg-violet-600 border border-violet-600 rounded text-xs text-white hover:bg-violet-500 font-bold disabled:cursor-not-allowed disabled:opacity-50"
-                                                                    title="複製報到內文後，以新分頁開啟 Gmail 撰寫並帶入學員 Email"
+                                                                    title="透過 Resend 寄送與「全部送出」相同之 HTML 報到信（含確認出席連結）"
                                                                 >
-                                                                    Gmail 撰寫
+                                                                    寄報到信
                                                                 </button>
                                                                 <button
                                                                     onClick={() => copyCheckInLink(reg)}
@@ -1722,16 +1840,19 @@ const SignupAdmin = () => {
                                                                 <span className="text-slate-400">尚未</span>
                                                             )}
                                                         </div>
+                                                        {reg.attendanceConfirmedAt && (
+                                                            <div className="mt-1 text-[10px] font-bold text-emerald-700">已確認出席</div>
+                                                        )}
 
                                                         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                                                             <button
                                                                 type="button"
-                                                                onClick={() => copyAndOpenGmailCompose(reg)}
-                                                                disabled={!reg.email}
+                                                                onClick={() => handleSendOneCheckInEmailResend(reg)}
+                                                                disabled={opLoading || !reg.email || reg.status === 'cancelled'}
                                                                 className="flex-1 min-h-[40px] px-2 py-1.5 rounded-lg text-xs font-bold border border-violet-600 bg-violet-600 text-white hover:bg-violet-500 active:bg-violet-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                                                title="複製報到內文並開啟 Gmail 撰寫"
+                                                                title="透過 Resend 寄送 HTML 報到信"
                                                             >
-                                                                Gmail
+                                                                寄報到信
                                                             </button>
                                                             <button
                                                                 type="button"

@@ -37,6 +37,10 @@
           "function": "api"
         },
         {
+          "source": "/signup/confirm-attendance",
+          "function": "confirmVibeAttendanceLink"
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }
