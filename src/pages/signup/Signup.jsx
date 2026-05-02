@@ -1,19 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
+import { resolvePosterSrc, resolvePosterSeoUrl } from './signupLandingShared';
+import { useSignupLandingSettings } from './useSignupLandingSettings';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import liff from '@line/liff';
 
 const LIFF_ID = '2008963361-MrRNV5vJ';
 const LINE_OA_ID = '@217vdaka';
-
-const PROMO_YOUTUBE_VIDEOS = [
-    { id: 'ea3_moV1XQk', label: '學員真心回饋 ①' },
-    { id: 'PRAX2uy1jHs', label: '學員真心回饋 ②' },
-];
-
-const SIGNUP_HERO_IMAGE = '/S__158801977.jpg';
 
 function buildYoutubeShortEmbedSrc(videoId, { muted, autoplay }) {
     const q = new URLSearchParams({ playsinline: '1', rel: '0', modestbranding: '1', mute: muted ? '1' : '0' });
@@ -128,8 +123,11 @@ const Signup = () => {
 
     const parallaxOffset = useParallax(0.25);
 
+    const { youtubeVideos: landingYoutubeVideos, posterImageUrl: landingPosterUrl } = useSignupLandingSettings();
+
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const seoImage = `${siteOrigin}${SIGNUP_HERO_IMAGE}`;
+    const posterSrc = resolvePosterSrc(landingPosterUrl);
+    const seoImage = resolvePosterSeoUrl(landingPosterUrl, siteOrigin);
     const seoUrl = `${siteOrigin}/vibe`;
 
     const previousSessionOptions = useMemo(() => {
@@ -518,7 +516,7 @@ const Signup = () => {
                             {/* 活動海報：固定緊接「你會帶走」版塊（全解析度同一位置） */}
                             <Reveal>
                                 <div className="rounded-3xl overflow-hidden shadow-2xl border border-zinc-800">
-                                    <img src={SIGNUP_HERO_IMAGE} alt="AI落地師培訓班活動海報" className="w-full h-auto" loading="lazy" />
+                                    <img src={posterSrc} alt="AI落地師培訓班活動海報" className="w-full h-auto" loading="lazy" />
                                 </div>
                             </Reveal>
 
@@ -568,21 +566,28 @@ const Signup = () => {
                                             {isVideoMuted ? '🔇 開聲音' : '🔊 已開聲'}
                                         </button>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {PROMO_YOUTUBE_VIDEOS.map((v, idx) => (
-                                            <div key={v.id} className="overflow-hidden rounded-2xl bg-zinc-800">
-                                                <p className="px-3 py-2 text-xs font-bold text-zinc-400">{v.label}</p>
-                                                <div style={{ position: 'relative', paddingTop: '177.78%' }}>
-                                                    <iframe key={`${v.id}-${isVideoMuted}`}
-                                                        src={buildYoutubeShortEmbedSrc(v.id, { muted: isVideoMuted, autoplay: idx === 0 })}
-                                                        loading={idx === 0 ? 'eager' : 'lazy'}
-                                                        style={{ border: 0, position: 'absolute', top: 0, height: '100%', width: '100%' }}
-                                                        title={v.label}
-                                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                                        referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
+                                    <div className={`grid gap-4 ${landingYoutubeVideos.length === 1 ? 'grid-cols-1 max-w-md mx-auto' : 'grid-cols-1 sm:grid-cols-2'}`}>
+                                        {landingYoutubeVideos.length === 0 ? (
+                                            <p className="text-sm text-zinc-500 py-6 text-center">尚未設定學員回饋影片，請洽主辦或稍後再試。</p>
+                                        ) : (
+                                            landingYoutubeVideos.map((v, idx) => (
+                                                <div key={`${v.videoId}-${idx}`} className="overflow-hidden rounded-2xl bg-zinc-800">
+                                                    <p className="px-3 py-2 text-xs font-bold text-zinc-400">{v.label}</p>
+                                                    <div style={{ position: 'relative', paddingTop: '177.78%' }}>
+                                                        <iframe
+                                                            key={`${v.videoId}-${isVideoMuted}`}
+                                                            src={buildYoutubeShortEmbedSrc(v.videoId, { muted: isVideoMuted, autoplay: idx === 0 })}
+                                                            loading={idx === 0 ? 'eager' : 'lazy'}
+                                                            style={{ border: 0, position: 'absolute', top: 0, height: '100%', width: '100%' }}
+                                                            title={v.label}
+                                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                            referrerPolicy="strict-origin-when-cross-origin"
+                                                            allowFullScreen
+                                                        />
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            ))
+                                        )}
                                     </div>
                                 </article>
                             </Reveal>

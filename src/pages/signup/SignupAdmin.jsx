@@ -1,8 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { auth, functions, googleProvider } from '../../firebase';
-import { collection, query, orderBy, getDocs } from 'firebase/firestore'; // Keep getDocs for fallback/dev
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { auth, functions, googleProvider, db, storage } from '../../firebase';
+import { collection, query, orderBy, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import {
+    SIGNUP_LANDING_COLLECTION,
+    SIGNUP_LANDING_DOC_ID,
+    DEFAULT_SIGNUP_LANDING,
+    normalizeSignupLandingData,
+    extractYoutubeVideoId,
+    resolvePosterSrc,
+} from './signupLandingShared';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
 
@@ -76,7 +85,7 @@ const SignupAdmin = () => {
 
     const [adminEmail, setAdminEmail] = useState(null);
     const isAdmin = !!adminEmail || isMockMode;
-    const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations'
+    const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations', 'landing'
     const [sessions, setSessions] = useState([]);
     const [registrations, setRegistrations] = useState([]);
     const [selectedSession, setSelectedSession] = useState(null);
@@ -138,6 +147,14 @@ const SignupAdmin = () => {
         taxId: ''
     });
     const [identityVerifiedMap, setIdentityVerifiedMap] = useState({});
+
+    /** 報名頁設定（Firestore + Storage 海報） */
+    const [landingDraft, setLandingDraft] = useState(null);
+    const [landingLoadError, setLandingLoadError] = useState('');
+    const [landingSaving, setLandingSaving] = useState(false);
+    const [landingUploading, setLandingUploading] = useState(false);
+    const [landingMsg, setLandingMsg] = useState('');
+    const landingPosterInputRef = useRef(null);
 
     useEffect(() => {
         if (isMockMode) {
@@ -219,6 +236,138 @@ const SignupAdmin = () => {
 
     const handleLogout = async () => {
         await signOut(auth);
+    };
+
+    useEffect(() => {
+        if (!adminEmail || viewMode !== 'landing') return;
+        if (isMockMode) {
+            const n = DEFAULT_SIGNUP_LANDING;
+            setLandingDraft({
+                rows: n.youtubeVideos.map((v) => ({ urlOrId: v.videoId, label: v.label })),
+                posterImageUrl: n.posterImageUrl,
+            });
+            setLandingLoadError('');
+            return;
+        }
+        let cancelled = false;
+        setLandingLoadError('');
+        setLandingDraft(null);
+        (async () => {
+            try {
+                const snap = await getDoc(doc(db, SIGNUP_LANDING_COLLECTION, SIGNUP_LANDING_DOC_ID));
+                const n = snap.exists() ? normalizeSignupLandingData(snap.data()) : { ...DEFAULT_SIGNUP_LANDING };
+                if (cancelled) return;
+                setLandingDraft({
+                    rows:
+                        n.youtubeVideos.length > 0
+                            ? n.youtubeVideos.map((v) => ({ urlOrId: v.videoId, label: v.label }))
+                            : [{ urlOrId: '', label: '' }],
+                    posterImageUrl: n.posterImageUrl,
+                });
+            } catch (e) {
+                if (!cancelled) {
+                    setLandingLoadError(e.message || '讀取報名頁設定失敗');
+                    setLandingDraft({
+                        rows: DEFAULT_SIGNUP_LANDING.youtubeVideos.map((v) => ({
+                            urlOrId: v.videoId,
+                            label: v.label,
+                        })),
+                        posterImageUrl: '',
+                    });
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [adminEmail, viewMode, isMockMode]);
+
+    const handleLandingSave = async () => {
+        if (!landingDraft) return;
+        setLandingMsg('');
+        if (isMockMode) {
+            setLandingMsg('本地 mock 模式無法寫入 Firestore，請於正式環境以管理員登入後儲存。');
+            return;
+        }
+        setLandingSaving(true);
+        try {
+            const youtubeVideos = landingDraft.rows
+                .map((row, i) => ({
+                    videoId: extractYoutubeVideoId(row.urlOrId),
+                    label: (row.label || '').trim() || `學員回饋 ${i + 1}`,
+                }))
+                .filter((v) => /^[\w-]{11}$/.test(v.videoId));
+            await setDoc(
+                doc(db, SIGNUP_LANDING_COLLECTION, SIGNUP_LANDING_DOC_ID),
+                {
+                    youtubeVideos,
+                    posterImageUrl: (landingDraft.posterImageUrl || '').trim(),
+                    updatedAt: serverTimestamp(),
+                },
+                { merge: true }
+            );
+            setLandingMsg('已儲存，報名頁與分享預覽圖將自動更新。');
+        } catch (e) {
+            setLandingMsg(`儲存失敗：${e.message || e}`);
+        } finally {
+            setLandingSaving(false);
+        }
+    };
+
+    const handleLandingPosterChange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            setLandingMsg('請選擇圖片檔（image/*）。');
+            return;
+        }
+        const MAX = 5 * 1024 * 1024;
+        if (file.size >= MAX) {
+            setLandingMsg('檔案請小於 5MB（Firebase Storage 規則上限）。');
+            return;
+        }
+        if (isMockMode) {
+            setLandingMsg('mock 模式無法上傳 Storage。');
+            e.target.value = '';
+            return;
+        }
+        setLandingUploading(true);
+        setLandingMsg('');
+        try {
+            const safe = file.name.replace(/[^\w.-]/g, '_').slice(0, 80);
+            const path = `signup_page/poster_${Date.now()}_${safe}`;
+            const storageRef = ref(storage, path);
+            await uploadBytes(storageRef, file);
+            const url = await getDownloadURL(storageRef);
+            setLandingDraft((d) => (d ? { ...d, posterImageUrl: url } : d));
+            setLandingMsg('圖片已上傳，請按「儲存設定」寫入報名頁（含 SEO 分享圖）。');
+        } catch (err) {
+            setLandingMsg(`上傳失敗：${err.message || err}`);
+        } finally {
+            setLandingUploading(false);
+            if (e.target) e.target.value = '';
+        }
+    };
+
+    const addLandingVideoRow = () => {
+        setLandingDraft((d) => (d ? { ...d, rows: [...d.rows, { urlOrId: '', label: '' }] } : d));
+    };
+
+    const removeLandingVideoRow = (index) => {
+        setLandingDraft((d) => (d ? { ...d, rows: d.rows.filter((_, i) => i !== index) } : d));
+    };
+
+    const updateLandingVideoRow = (index, field, value) => {
+        setLandingDraft((d) => {
+            if (!d) return d;
+            const rows = d.rows.map((row, i) => (i === index ? { ...row, [field]: value } : row));
+            return { ...d, rows };
+        });
+    };
+
+    const clearLandingPoster = () => {
+        setLandingDraft((d) => (d ? { ...d, posterImageUrl: '' } : d));
+        setLandingMsg('已清除自訂海報（請按儲存套用）；未設定時報名頁使用預設 public 圖。');
     };
 
     const buildTimeNotAvailableSession = () => ({
@@ -1262,13 +1411,38 @@ const SignupAdmin = () => {
                                     </svg>
                                 </button>
                             )}
-                            AI落地師培訓班 {viewMode === 'sessions' ? '場次管理' : '報名名單管理'}
+                            AI落地師培訓班{' '}
+                            {viewMode === 'sessions' ? '場次管理' : viewMode === 'landing' ? '報名頁設定' : '報名名單管理'}
                         </h1>
                         {adminEmail && (
                             <p className="text-slate-500 text-sm mt-1 flex items-center gap-2">
                                 Admin: <span className="font-mono bg-slate-200 px-2 py-0.5 rounded text-slate-700">{adminEmail}</span>
                                 <button onClick={handleLogout} className="text-blue-500 hover:underline text-xs">登出</button>
                             </p>
+                        )}
+                        {adminEmail && viewMode !== 'registrations' && (
+                            <nav className="flex flex-wrap gap-2 mt-4" aria-label="後台選單">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setViewMode('sessions');
+                                        setLandingMsg('');
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${viewMode === 'sessions' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
+                                >
+                                    場次管理
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setViewMode('landing');
+                                        setLandingMsg('');
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${viewMode === 'landing' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
+                                >
+                                    報名頁設定
+                                </button>
+                            </nav>
                         )}
                     </div>
                     {isAdmin && viewMode === 'sessions' && (
@@ -1302,6 +1476,148 @@ const SignupAdmin = () => {
                     </div>
                 ) : (
                     <>
+                        {/* VIEW MODE: 報名頁公開設定（影片 / 海報） */}
+                        {viewMode === 'landing' && (
+                            <section className="bg-white rounded-xl shadow-md border border-slate-200 p-6 md:p-8 mb-8">
+                                <h2 className="sr-only">報名頁設定</h2>
+                                {landingDraft === null ? (
+                                    <div className="flex justify-center py-16">
+                                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col gap-6">
+                                        {landingLoadError ? (
+                                            <div className="text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm">
+                                                {landingLoadError}（已載入預設值供編輯）
+                                            </div>
+                                        ) : null}
+                                        <p className="text-slate-600 text-sm leading-relaxed">
+                                            此設定會即時套用到公開報名頁（影片區塊、活動海報與分享預覽圖）。資料存放在 Firestore{' '}
+                                            <code className="bg-slate-100 px-1 rounded text-xs">
+                                                {SIGNUP_LANDING_COLLECTION}/{SIGNUP_LANDING_DOC_ID}
+                                            </code>
+                                            ；海報檔案於 Storage 路徑 <code className="bg-slate-100 px-1 rounded text-xs">signup_page/</code>。
+                                        </p>
+
+                                        <div>
+                                            <h3 className="text-lg font-bold text-slate-800 mb-1">YouTube 學員回饋影片</h3>
+                                            <p className="text-xs text-slate-500 mb-4">
+                                                可新增多列；每列貼上完整網址（Shorts／一般影片／youtu.be）或 11
+                                                碼影片 ID。儲存時無法解析的列會自動略過。
+                                            </p>
+                                            <div className="flex flex-col gap-3">
+                                                {landingDraft.rows.map((row, idx) => (
+                                                    <div
+                                                        key={`yt-${idx}`}
+                                                        className="flex flex-col lg:flex-row gap-3 lg:items-center border border-slate-100 rounded-xl p-4 bg-slate-50/80"
+                                                    >
+                                                        <label className="flex-1 flex flex-col gap-1 text-xs font-semibold text-slate-600">
+                                                            連結或影片 ID
+                                                            <input
+                                                                type="text"
+                                                                value={row.urlOrId}
+                                                                onChange={(e) => updateLandingVideoRow(idx, 'urlOrId', e.target.value)}
+                                                                placeholder="https://www.youtube.com/shorts/xxxxxxxxxxx"
+                                                                className="font-normal text-base px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                                                            />
+                                                        </label>
+                                                        <label className="flex-1 flex flex-col gap-1 text-xs font-semibold text-slate-600">
+                                                            顯示標題
+                                                            <input
+                                                                type="text"
+                                                                value={row.label}
+                                                                onChange={(e) => updateLandingVideoRow(idx, 'label', e.target.value)}
+                                                                placeholder="例如：學員真心回饋 ①"
+                                                                className="font-normal text-base px-3 py-2 rounded-lg border border-slate-200 bg-white"
+                                                            />
+                                                        </label>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeLandingVideoRow(idx)}
+                                                            className="text-rose-600 hover:text-rose-700 text-sm font-bold px-3 py-2 lg:self-end shrink-0"
+                                                        >
+                                                            移除
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={addLandingVideoRow}
+                                                className="mt-3 text-blue-600 hover:text-blue-700 text-sm font-bold"
+                                            >
+                                                + 新增一列影片
+                                            </button>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-lg font-bold text-slate-800 mb-1">活動海報</h3>
+                                            <p className="text-xs text-slate-500 mb-4">
+                                                建議直式海報，僅支援圖片、單檔 5MB 以內。上傳後請按下方「儲存設定」一併寫入（含 SEO
+                                                og:image）。
+                                            </p>
+                                            <div className="flex flex-col sm:flex-row gap-6 items-start">
+                                                <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 max-w-xs w-full shrink-0">
+                                                    <img
+                                                        src={resolvePosterSrc(landingDraft.posterImageUrl)}
+                                                        alt="海報預覽"
+                                                        className="w-full h-auto object-cover"
+                                                    />
+                                                </div>
+                                                <div className="flex flex-col gap-3 items-start">
+                                                    <input
+                                                        ref={landingPosterInputRef}
+                                                        type="file"
+                                                        accept="image/*"
+                                                        className="hidden"
+                                                        onChange={handleLandingPosterChange}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        disabled={landingUploading || isMockMode}
+                                                        onClick={() => landingPosterInputRef.current?.click()}
+                                                        className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+                                                    >
+                                                        {landingUploading ? '上傳中…' : '選擇圖片上傳'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={clearLandingPoster}
+                                                        className="text-slate-600 hover:text-slate-800 text-sm underline"
+                                                    >
+                                                        清除自訂海報（未儲存前仍以預覽為準）
+                                                    </button>
+                                                    {isMockMode ? (
+                                                        <p className="text-xs text-amber-700">mock 模式無法上傳至 Storage。</p>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {landingMsg ? (
+                                            <div className="text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm whitespace-pre-wrap">
+                                                {landingMsg}
+                                            </div>
+                                        ) : null}
+
+                                        <div className="flex flex-wrap gap-3 pt-2">
+                                            <button
+                                                type="button"
+                                                disabled={landingSaving || isMockMode}
+                                                onClick={handleLandingSave}
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-bold shadow disabled:opacity-50"
+                                            >
+                                                {landingSaving ? '儲存中…' : '儲存設定'}
+                                            </button>
+                                            {isMockMode ? (
+                                                <span className="text-xs text-slate-500 self-center">mock 模式無法寫入 Firestore。</span>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        )}
+
                         {/* VIEW MODE: SESSIONS */}
                         {viewMode === 'sessions' && (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

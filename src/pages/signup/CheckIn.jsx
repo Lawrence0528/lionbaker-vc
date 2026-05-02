@@ -3,6 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { db } from '../../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import SEO from '../../components/SEO';
+import { resolvePosterSeoUrl } from './signupLandingShared';
+import { useSignupLandingSettings } from './useSignupLandingSettings';
 
 const CheckIn = () => {
     const { uid } = useParams();
@@ -11,8 +13,10 @@ const CheckIn = () => {
     const [error, setError] = useState('');
     const [registration, setRegistration] = useState(null);
 
+    const { posterImageUrl: landingPosterUrl } = useSignupLandingSettings();
+
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const seoImage = `${siteOrigin}/S__158801977.jpg`;
+    const seoImage = resolvePosterSeoUrl(landingPosterUrl, siteOrigin);
     const seoUrl = `${siteOrigin}/signup/checkin/${uid || ''}`;
 
     const qrSrc = useMemo(() => {

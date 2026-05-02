@@ -27,6 +27,15 @@ service firebase.storage {
         && isAllowedContentType();
     }
 
+    // 報名頁活動海報：公開讀取（報名頁 img）；僅授權管理員 Gmail 可上傳
+    match /signup_page/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com'
+        && isAllowedSize()
+        && isAllowedContentType();
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

@@ -4,6 +4,8 @@ import { httpsCallable } from 'firebase/functions';
 import { onAuthStateChanged } from 'firebase/auth';
 import SEO from '../../components/SEO';
 import { BrowserMultiFormatReader } from '@zxing/browser';
+import { resolvePosterSeoUrl } from './signupLandingShared';
+import { useSignupLandingSettings } from './useSignupLandingSettings';
 
 const DEFAULT_PRICE = 3980;
 const CHECKIN_SESSION_STORAGE_KEY = 'checkin_process_selected_session_id';
@@ -210,8 +212,10 @@ const CheckInProcess = () => {
         };
     }, [primeCheckinAudio]);
 
+    const { posterImageUrl: landingPosterUrl } = useSignupLandingSettings();
+
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const seoImage = `${siteOrigin}/S__158801977.jpg`;
+    const seoImage = resolvePosterSeoUrl(landingPosterUrl, siteOrigin);
     const seoUrl = `${siteOrigin}/signup/checkin-process`;
 
     const selectedSession = useMemo(

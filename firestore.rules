@@ -58,6 +58,14 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // 報名頁公開素材（影片 id、海報 URL）；僅授權管理員 Gmail 可寫入
+    match /signup_page_settings/{docId} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+      allow delete: if false;
+    }
+
     // 其餘集合僅允許 Admin SDK（Cloud Functions 等）存取
     match /{document=**} {
       allow read, write: if false;
