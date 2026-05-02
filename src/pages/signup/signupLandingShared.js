@@ -1,5 +1,8 @@
 /** Firestore：`signup_page_settings/default`，報名頁公開素材（前端訂閱 + 後台編輯） */
 
+/** 設為 true 時恢復：報名頁「以上場次時間無法配合」選項與後台許願統計卡片 */
+export const SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION = false;
+
 export const SIGNUP_LANDING_COLLECTION = 'signup_page_settings';
 export const SIGNUP_LANDING_DOC_ID = 'default';
 

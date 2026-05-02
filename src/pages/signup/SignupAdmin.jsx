@@ -11,6 +11,7 @@ import {
     normalizeSignupLandingData,
     extractYoutubeVideoId,
     resolvePosterSrc,
+    SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
 } from './signupLandingShared';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
@@ -1621,37 +1622,39 @@ const SignupAdmin = () => {
                         {/* VIEW MODE: SESSIONS */}
                         {viewMode === 'sessions' && (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {/* Special Card: Time Not Available */}
-                                <div
-                                    key="time_not_available_card"
-                                    className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-all border border-emerald-100 group relative overflow-hidden"
-                                >
-                                    <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full -mr-10 -mt-10 transition-transform group-hover:scale-150"></div>
-                                    <div className="relative">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <h3 className="text-xl font-bold text-slate-800">以上場次時間無法配合</h3>
-                                            <div className="text-emerald-700 bg-emerald-50 border border-emerald-200 text-xs font-bold px-2 py-1 rounded">
-                                                許願統計
+                                {SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && (
+                                    <div
+                                        key="time_not_available_card"
+                                        className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-all border border-emerald-100 group relative overflow-hidden"
+                                    >
+                                        <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/10 rounded-full -mr-10 -mt-10 transition-transform group-hover:scale-150"></div>
+                                        <div className="relative">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h3 className="text-xl font-bold text-slate-800">以上場次時間無法配合</h3>
+                                                <div className="text-emerald-700 bg-emerald-50 border border-emerald-200 text-xs font-bold px-2 py-1 rounded">
+                                                    許願統計
+                                                </div>
+                                            </div>
+                                            <p className="text-slate-500 text-sm mb-3">彙整學員希望的開課時間與地點</p>
+                                            <p className="text-emerald-700 font-bold mb-4 flex items-center gap-1">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                點進去看填寫內容
+                                            </p>
+
+                                            <div className="flex justify-end items-center text-sm text-slate-500">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => fetchRegistrations(buildTimeNotAvailableSession())}
+                                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-4 py-2 rounded-lg transition-colors border border-emerald-200"
+                                                >
+                                                    管理 &rarr;
+                                                </button>
                                             </div>
                                         </div>
-                                        <p className="text-slate-500 text-sm mb-3">彙整學員希望的開課時間與地點</p>
-                                        <p className="text-emerald-700 font-bold mb-4 flex items-center gap-1">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                            </svg>
-                                            點進去看填寫內容
-                                        </p>
-
-                                        <div className="flex justify-end items-center text-sm text-slate-500">
-                                            <button
-                                                onClick={() => fetchRegistrations(buildTimeNotAvailableSession())}
-                                                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-4 py-2 rounded-lg transition-colors border border-emerald-200"
-                                            >
-                                                管理 &rarr;
-                                            </button>
-                                        </div>
                                     </div>
-                                </div>
+                                )}
 
                                 {sessions.length === 0 && (
                                     <div className="col-span-full text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-slate-300">

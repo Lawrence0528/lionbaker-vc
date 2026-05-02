@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
-import { resolvePosterSrc, resolvePosterSeoUrl } from './signupLandingShared';
+import { resolvePosterSrc, resolvePosterSeoUrl, SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION } from './signupLandingShared';
 import { useSignupLandingSettings } from './useSignupLandingSettings';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -208,7 +208,13 @@ const Signup = () => {
                     const firstOpen = signupOpenSessions.find(s => s.status === 'open');
                     if (firstOpen) setSelectedSessionId(firstOpen.id);
                     else if (signupOpenSessions.length > 0) setSelectedSessionId(signupOpenSessions[0].id);
-                    else { setSelectedSessionId('time_not_available'); setSessionsError('目前沒有開放報名場次，可改選「以上場次時間無法配合」留下許願資訊。'); }
+                    else if (SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION) {
+                        setSelectedSessionId('time_not_available');
+                        setSessionsError('目前沒有開放報名場次，可改選「以上場次時間無法配合」留下許願資訊。');
+                    } else {
+                        setSelectedSessionId(null);
+                        setSessionsError('目前沒有開放報名場次，請稍後再試或聯絡主辦。');
+                    }
                 } else {
                     setSessions([{ id: 'default_01', date: '2026-02-08T13:00:00', endTime: '17:30', displayDate: '2026/02/08 (日) 13:00～17:30', location: 'TOP SPACE 商務中心', address: '臺中市中區民族路23號3樓', price: 1980, originalPrice: 5000, status: 'open', title: 'AI落地師培訓班 (預設)', refresherMaxCapacity: DEFAULT_REFRESHER_MAX, refresherCurrentCount: 0 }]);
                     setSelectedSessionId('default_01');
@@ -229,6 +235,7 @@ const Signup = () => {
 
     const handleSessionSelect = (sessionId) => {
         const nextId = String(sessionId);
+        if (!SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && nextId === 'time_not_available') return;
         setSelectedSessionId(nextId);
         if (nextId !== 'time_not_available') setFormData(prev => ({ ...prev, isTimeNotAvailable: false, wishTime: '', wishLocation: '', previousSessionId: '' }));
         else setFormData(prev => ({ ...prev, isTimeNotAvailable: true, registrationKind: 'main', previousSessionId: '' }));
@@ -237,6 +244,10 @@ const Signup = () => {
     const handleSubmit = async (e) => {
         e.preventDefault(); setError('');
         if (!selectedSessionId) { setError('請先選擇場次'); return; }
+        if (!SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && formData.isTimeNotAvailable) {
+            setError('請選擇有效場次後再送出。');
+            return;
+        }
         if (formData.isTimeNotAvailable) {
             if (!formData.wishTime.trim()) { setError('請填寫許願開課時間'); return; }
             if (!formData.wishLocation.trim()) { setError('請填寫許願開課地點'); return; }
@@ -657,20 +668,21 @@ const Signup = () => {
                                                         );
                                                     })}
 
-                                                    {/* Time not available */}
-                                                    <div role="button" tabIndex={0}
-                                                        className={`session-card relative border rounded-2xl p-4 cursor-pointer outline-none ${selectedSessionId === 'time_not_available' ? 'border-emerald-500/60 bg-emerald-500/5' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/40'}`}
-                                                        onClick={() => handleSessionSelect('time_not_available')}
-                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSessionSelect('time_not_available'); }}>
-                                                        <div className="flex justify-between items-center mb-1">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className={`w-2 h-2 rounded-full ${selectedSessionId === 'time_not_available' ? 'bg-emerald-400' : 'bg-zinc-600'}`}></div>
-                                                                <span className="font-bold text-white text-sm">以上場次時間無法配合</span>
+                                                    {SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && (
+                                                        <div role="button" tabIndex={0}
+                                                            className={`session-card relative border rounded-2xl p-4 cursor-pointer outline-none ${selectedSessionId === 'time_not_available' ? 'border-emerald-500/60 bg-emerald-500/5' : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/40'}`}
+                                                            onClick={() => handleSessionSelect('time_not_available')}
+                                                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSessionSelect('time_not_available'); }}>
+                                                            <div className="flex justify-between items-center mb-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className={`w-2 h-2 rounded-full ${selectedSessionId === 'time_not_available' ? 'bg-emerald-400' : 'bg-zinc-600'}`}></div>
+                                                                    <span className="font-bold text-white text-sm">以上場次時間無法配合</span>
+                                                                </div>
+                                                                {selectedSessionId === 'time_not_available' && <span className="text-xs bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-lg border border-emerald-500/20">已選擇</span>}
                                                             </div>
-                                                            {selectedSessionId === 'time_not_available' && <span className="text-xs bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-lg border border-emerald-500/20">已選擇</span>}
+                                                            <div className="pl-4 text-xs text-zinc-500">勾選後請填寫您希望的開課時間與地點，方便我們統計加開場次。</div>
                                                         </div>
-                                                        <div className="pl-4 text-xs text-zinc-500">勾選後請填寫您希望的開課時間與地點，方便我們統計加開場次。</div>
-                                                    </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -705,7 +717,7 @@ const Signup = () => {
                                         )}
 
                                         {/* Wish Fields */}
-                                        {formData.isTimeNotAvailable && (
+                                        {SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && formData.isTimeNotAvailable && (
                                             <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5">
                                                 <p className="text-sm font-bold text-emerald-400 mb-4">許願開課資訊</p>
                                                 <div className="flex flex-col gap-4">
