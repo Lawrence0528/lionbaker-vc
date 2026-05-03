@@ -9,6 +9,14 @@ export const SIGNUP_LANDING_DOC_ID = 'default';
 /** Firestore：`vibe_referral_codes/{8碼}`，公開報名頁以 `?ref=` 對應文件 ID */
 export const VIBE_REFERRAL_CODES_COLLECTION = 'vibe_referral_codes';
 
+/** 為 true 時：經該連結進入報名頁者，可見「活動／抽獎」宣傳區塊（見 Signup.jsx） */
+export const VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW = 'joinActivityLuckyDraw';
+
+/** 活動抽獎「單獨送出」之登記紀錄（非 registrations_vibe） */
+export const VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COLLECTION = 'vibe_activity_lucky_draw_entries';
+
+export const VIBE_ACTIVITY_LUCKY_DRAW_CAMPAIGN_MOTHERS_DAY_2026 = 'mothers_day_2026';
+
 /** URL `ref` 正規化：僅保留英數字，並預期為 8 碼（與後台網址代碼一致） */
 export function normalizeVibeSignupRefParam(raw) {
     try {

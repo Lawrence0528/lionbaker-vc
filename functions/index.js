@@ -449,6 +449,162 @@ exports.api = onRequest(apiApp);
 const VIBE_SESSIONS_COL = "vibe_sessions";
 const VIBE_REGISTRATIONS_COL = "registrations_vibe";
 
+/** 與公開報名頁 `signupLandingShared` 之母親節活動 slug 對齊 */
+const VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COL = "vibe_activity_lucky_draw_entries";
+/** 由 Callable 原子寫入，避免並發重複；客戶端不可寫 */
+const VIBE_ACTIVITY_LUCKY_DRAW_DEDUPE_COL = "vibe_activity_lucky_draw_dedupe";
+const MOTHERS_DAY_2026_CAMPAIGN_ID = "mothers_day_2026";
+/** 抽獎登記日起算，折扣碼有效天數（Firestore 寫入 discountExpiresAt） */
+const MOTHERS_DAY_DISCOUNT_VALID_MS = 30 * 24 * 60 * 60 * 1000;
+/** 母親節抽獎折扣碼用於正課報名折抵（須與前台 Signup 顯示一致） */
+const MOTHERS_DAY_COURSE_DISCOUNT_NTD = 100;
+
+function mothersDayDiscountExpiresAtFromRegistration(registrationTimeMs) {
+    return admin.firestore.Timestamp.fromMillis(Number(registrationTimeMs) + MOTHERS_DAY_DISCOUNT_VALID_MS);
+}
+
+async function findExistingMothersDay2026Entry(phoneNorm, emailNorm) {
+    const col = db.collection(VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COL);
+    const camp = MOTHERS_DAY_2026_CAMPAIGN_ID;
+    const qPhone = await col.where("campaign", "==", camp).where("phone", "==", phoneNorm).limit(1).get();
+    if (!qPhone.empty) return qPhone.docs[0];
+    const qEmail = await col.where("campaign", "==", camp).where("emailNormalized", "==", emailNorm).limit(1).get();
+    if (!qEmail.empty) return qEmail.docs[0];
+    return null;
+}
+
+/**
+ * 舊資料可能無 discountCode／discountExpiresAt：補寫入並確保 dedupe 鎖。
+ */
+async function ensureMothersDayEntryDiscountAndExpiry(entryDoc) {
+    const ref = entryDoc.ref;
+    let snap = await ref.get();
+    let data = snap.data() || {};
+    const createdMs = data.createdAt?.toMillis?.() ?? Date.now();
+    const defaultExpiry = mothersDayDiscountExpiresAtFromRegistration(createdMs);
+
+    if (data.discountCode && data.discountExpiresAt) {
+        return snap;
+    }
+
+    if (data.discountCode && !data.discountExpiresAt) {
+        await ref.update({ discountExpiresAt: defaultExpiry });
+        return ref.get();
+    }
+
+    const dedupeCol = db.collection(VIBE_ACTIVITY_LUCKY_DRAW_DEDUPE_COL);
+    const entryId = ref.id;
+
+    for (let attempt = 0; attempt < 16; attempt++) {
+        const candidateCode = randomAlphanumericDiscountCode8();
+        const discountLockRef = dedupeCol.doc(`${MOTHERS_DAY_2026_CAMPAIGN_ID}__discount__${candidateCode}`);
+        try {
+            await db.runTransaction(async (tx) => {
+                const fresh = await tx.get(ref);
+                const fd = fresh.data() || {};
+                if (fd.discountCode) {
+                    return;
+                }
+                const ls = await tx.get(discountLockRef);
+                if (ls.exists) {
+                    throw new Error("discount_collision");
+                }
+                const exp =
+                    fd.discountExpiresAt ||
+                    mothersDayDiscountExpiresAtFromRegistration(fd.createdAt?.toMillis?.() ?? createdMs);
+                tx.set(discountLockRef, {
+                    campaign: MOTHERS_DAY_2026_CAMPAIGN_ID,
+                    entryId,
+                    discountCode: candidateCode,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                tx.update(ref, {
+                    discountCode: candidateCode,
+                    discountExpiresAt: exp,
+                });
+            });
+            const after = await ref.get();
+            const ad = after.data() || {};
+            if (ad.discountCode) return after;
+        } catch (e) {
+            if (e instanceof Error && e.message === "discount_collision") {
+                continue;
+            }
+            throw e;
+        }
+    }
+    throw new HttpsError("unknown", "系統忙碌，請稍後再試。");
+}
+
+function discountExpiresIsoFromDoc(data) {
+    const ts = data?.discountExpiresAt;
+    if (ts?.toDate) return ts.toDate().toISOString();
+    const createdMs = data?.createdAt?.toMillis?.() ?? Date.now();
+    return new Date(createdMs + MOTHERS_DAY_DISCOUNT_VALID_MS).toISOString();
+}
+
+/** 台灣時區：折扣碼截止時間文字（登記日起算 30 日） */
+function formatMothersDayDiscountExpiryZhTWFromIso(isoOrMillis) {
+    const ms =
+        typeof isoOrMillis === "string"
+            ? Date.parse(isoOrMillis)
+            : Number(isoOrMillis);
+    const d = new Date(Number.isFinite(ms) ? ms : Date.now());
+    return d.toLocaleString("zh-TW", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+}
+
+/**
+ * 依 Firestore 登記文件寄送母親節抽獎確認／重寄信（variant：resend | already_registered）。
+ */
+async function sendMothersDayLuckyDrawEmailFromDocData(resendApiKeyVal, d, emailDisp, phoneNorm, variant) {
+    const discountCode = String(d.discountCode || "");
+    if (!discountCode) {
+        return;
+    }
+    const discountExpiresAtIso = discountExpiresIsoFromDoc(d);
+    const origin = vibePublicOrigin.value().replace(/\/$/, "");
+    const from = resendFromEmail.value();
+    const isResend = variant === "resend";
+    const html = buildMothersDayLuckyDrawConfirmationEmailHtml({
+        origin,
+        name: String(d.name || "").trim() || "—",
+        email: emailDisp,
+        phone: phoneNorm,
+        referralCode: String(d.referralCode || ""),
+        referrerSnapshot: String(d.referrerSnapshot || "").trim().slice(0, 80),
+        prizeSummary: String(d.prizeSummary || ""),
+        drawAnnouncementNote: String(d.drawAnnouncementNote || ""),
+        discountCode,
+        discountExpiryLabel: formatMothersDayDiscountExpiryZhTWFromIso(discountExpiresAtIso),
+        emailHeadline: isResend ? "確認信重寄" : "您已登記母親節抽獎",
+        emailBadgeLabel: isResend ? "母親節限定｜抽獎確認信" : "母親節限定｜抽獎登記提醒",
+        emailLeadParagraph: isResend
+            ? "您申請重寄本信。以下為您先前登記的抽獎資料與專屬折扣碼（折扣碼限登記日起 30 日內使用）。"
+            : "您先前已完成抽獎登記。以下再次附上折扣碼與登記摘要（折扣碼限登記日起 30 日內使用）。",
+    });
+    const subject = isResend
+        ? `【母親節抽獎】確認信重寄｜您的專屬折扣碼 ${discountCode}`
+        : `【母親節抽獎】登記紀錄提醒｜您的專屬折扣碼 ${discountCode}`;
+    const resend = new Resend(resendApiKeyVal);
+    const { error } = await resend.emails.send({
+        from,
+        to: emailDisp,
+        subject,
+        html,
+    });
+    if (error) {
+        throw new Error(error.message || "Resend 寄送失敗");
+    }
+}
+
 exports.getVibeSessions = onCall(async (request) => {
     const { data, auth } = request;
     const isAuthed = !!auth?.uid;
@@ -580,6 +736,615 @@ exports.checkVibeRegistrationDuplicate = onCall(async (request) => {
     }
     return { duplicate: false };
 });
+
+/**
+ * 母親節抽獎：每人限乙次；同一 Campaign 下同手機或同 Email（不分大小寫）即視為重複，
+ * 不論來自哪一組推薦碼。以交易寫入本體紀錄 + 去鎖鑰以避免並發。
+ * 成功後系統產生 8 碼英數字折扣碼、寄送確認信（含海報圖與登記資料）。
+ * 折扣碼於登記日起 30 日內有效（discountExpiresAt）。
+ * 若已登記：回傳 alreadyRegistered（不拋錯），並可透過 resendMothersDay2026LuckyDrawEmail 重寄信。
+ */
+exports.submitMothersDay2026LuckyDrawEntry = onCall(
+    { secrets: [resendApiKey] },
+    async (request) => {
+        const raw = request.data || {};
+        const name = String(raw.name || "").trim();
+        const emailDisp = String(raw.email || "").trim();
+        const emailNorm = emailDisp.toLowerCase();
+        const phoneNorm = String(raw.phone || "").replace(/\D/g, "");
+        const referralCode = String(raw.referralCode || "").trim();
+        const referrerSnapshot = String(raw.referrerSnapshot || "").trim().slice(0, 80);
+        const prizeSummary = String(raw.prizeSummary || "").trim().slice(0, 500);
+        const drawAnnouncementNote = String(raw.drawAnnouncementNote || "").trim().slice(0, 200);
+        const lineUserIdRaw = raw.lineUserId != null ? String(raw.lineUserId).trim().slice(0, 128) : "";
+        /** LIFF profile.userId：僅長度／不可見字元過濾，避免過度限制格式 */
+        let lineUserIdOut = "";
+        if (lineUserIdRaw.length > 0 && lineUserIdRaw.length <= 128 && !/[\x00-\x08\x0b\f\r\x0e-\x1f\n]/.test(lineUserIdRaw)) {
+            lineUserIdOut = lineUserIdRaw;
+        }
+
+        if (!name || name.length > 80) {
+            throw new HttpsError("invalid-argument", "請填寫姓名（至多 80 字）。");
+        }
+        if (emailDisp.length < 5 || emailDisp.length > 120 || emailNorm.length < 5) {
+            throw new HttpsError("invalid-argument", "請填寫有效的 Email。");
+        }
+        if (!/^09\d{8}$/.test(phoneNorm)) {
+            throw new HttpsError("invalid-argument", "請填寫 09 開頭的 10 碼手機。");
+        }
+        if (!/^[A-Za-z0-9]{8}$/.test(referralCode)) {
+            throw new HttpsError("invalid-argument", "推薦代碼格式不正確（須為 8 碼英數字）。");
+        }
+
+        const dupMsg =
+            "此手機號碼或 Email 已成功登記過母親節抽獎，每人限乙次（不分推薦連結）。";
+
+        const existingEarly = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
+        if (existingEarly) {
+            const snap = await ensureMothersDayEntryDiscountAndExpiry(existingEarly);
+            const d = snap.data() || {};
+            try {
+                await sendMothersDayLuckyDrawEmailFromDocData(
+                    resendApiKey.value(),
+                    d,
+                    emailDisp,
+                    phoneNorm,
+                    "already_registered"
+                );
+            } catch (mailErr) {
+                console.error("submitMothersDay2026LuckyDrawEntry alreadyRegistered email", mailErr);
+            }
+            return {
+                ok: false,
+                alreadyRegistered: true,
+                discountCode: String(d.discountCode || ""),
+                discountExpiresAt: discountExpiresIsoFromDoc(d),
+                message: "您已參加過母親節抽獎活動",
+            };
+        }
+
+        const entriesCol = db.collection(VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COL);
+        const dedupeCol = db.collection(VIBE_ACTIVITY_LUCKY_DRAW_DEDUPE_COL);
+        const lockPhoneRef = dedupeCol.doc(`${MOTHERS_DAY_2026_CAMPAIGN_ID}__phone__${phoneNorm}`);
+        const lockEmailRef = dedupeCol.doc(
+            `${MOTHERS_DAY_2026_CAMPAIGN_ID}__email__${crypto.createHash("sha256").update(emailNorm, "utf8").digest("hex")}`
+        );
+
+        const lockFieldsBase = {
+            campaign: MOTHERS_DAY_2026_CAMPAIGN_ID,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        let entryId = "";
+        let discountCode = "";
+        const registeredAtApproxMs = Date.now();
+
+        /** 不在 transaction 回呼內拋 HttpsError（避免部分環境吞錯） */
+        try {
+            const maxDiscountAttempts = 16;
+            let committed = false;
+            for (let attempt = 0; attempt < maxDiscountAttempts && !committed; attempt++) {
+                const candidateCode = randomAlphanumericDiscountCode8();
+                const entryRef = entriesCol.doc();
+                const eid = entryRef.id;
+                const discountLockRef = dedupeCol.doc(`${MOTHERS_DAY_2026_CAMPAIGN_ID}__discount__${candidateCode}`);
+
+                const payload = {
+                    campaign: MOTHERS_DAY_2026_CAMPAIGN_ID,
+                    name,
+                    email: emailDisp,
+                    emailNormalized: emailNorm,
+                    phone: phoneNorm,
+                    referralCode,
+                    referrerSnapshot,
+                    prizeSummary,
+                    drawAnnouncementNote,
+                    commentOnPostRequired: raw.commentOnPostRequired !== false,
+                    lineUserId: lineUserIdOut,
+                    discountCode: candidateCode,
+                    discountExpiresAt: mothersDayDiscountExpiresAtFromRegistration(registeredAtApproxMs),
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                    status: "submitted",
+                };
+
+                const lockFields = { ...lockFieldsBase, entryId: eid };
+
+                const txOutcome = await db.runTransaction(async (tx) => {
+                    const [lsP, lsE, lsD] = await Promise.all([
+                        tx.get(lockPhoneRef),
+                        tx.get(lockEmailRef),
+                        tx.get(discountLockRef),
+                    ]);
+                    if (lsP.exists || lsE.exists) {
+                        return "duplicate_lock";
+                    }
+                    if (lsD.exists) {
+                        return "discount_collision";
+                    }
+                    tx.set(lockPhoneRef, { ...lockFields, phone: phoneNorm });
+                    tx.set(lockEmailRef, { ...lockFields, emailNormalized: emailNorm });
+                    tx.set(discountLockRef, { ...lockFields, discountCode: candidateCode });
+                    tx.set(entryRef, payload);
+                    return "ok";
+                });
+
+                if (txOutcome === "duplicate_lock") {
+                    const ex = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
+                    if (ex) {
+                        const snap = await ensureMothersDayEntryDiscountAndExpiry(ex);
+                        const d = snap.data() || {};
+                        try {
+                            await sendMothersDayLuckyDrawEmailFromDocData(
+                                resendApiKey.value(),
+                                d,
+                                emailDisp,
+                                phoneNorm,
+                                "already_registered"
+                            );
+                        } catch (mailErr) {
+                            console.error("submitMothersDay2026LuckyDrawEntry duplicateLock email", mailErr);
+                        }
+                        return {
+                            ok: false,
+                            alreadyRegistered: true,
+                            discountCode: String(d.discountCode || ""),
+                            discountExpiresAt: discountExpiresIsoFromDoc(d),
+                            message: "您已參加過母親節抽獎活動",
+                        };
+                    }
+                    throw new HttpsError("already-exists", dupMsg);
+                }
+                if (txOutcome === "discount_collision") {
+                    continue;
+                }
+                if (txOutcome === "ok") {
+                    entryId = eid;
+                    discountCode = candidateCode;
+                    committed = true;
+                }
+            }
+            if (!committed || !discountCode) {
+                throw new HttpsError("unknown", "系統忙碌，請稍後再試。");
+            }
+        } catch (e) {
+            if (e instanceof HttpsError) {
+                throw e;
+            }
+            console.error("submitMothersDay2026LuckyDrawEntry txn", e);
+            throw new HttpsError("unknown", "系統忙碌，請稍後再試。");
+        }
+
+        const discountExpiresAtIso = new Date(
+            registeredAtApproxMs + MOTHERS_DAY_DISCOUNT_VALID_MS
+        ).toISOString();
+        const origin = vibePublicOrigin.value().replace(/\/$/, "");
+        const from = resendFromEmail.value();
+        const html = buildMothersDayLuckyDrawConfirmationEmailHtml({
+            origin,
+            name,
+            email: emailDisp,
+            phone: phoneNorm,
+            referralCode,
+            referrerSnapshot,
+            prizeSummary,
+            drawAnnouncementNote,
+            discountCode,
+            discountExpiryLabel: formatMothersDayDiscountExpiryZhTWFromIso(discountExpiresAtIso),
+            emailHeadline: "登記已成功",
+            emailBadgeLabel: "母親節限定｜抽獎登記成功",
+        });
+        const subject = `【母親節抽獎】登記成功｜您的專屬折扣碼 ${discountCode}`;
+
+        try {
+            const resend = new Resend(resendApiKey.value());
+            const { error } = await resend.emails.send({
+                from,
+                to: emailDisp,
+                subject,
+                html,
+            });
+            if (error) {
+                console.error("submitMothersDay2026LuckyDrawEntry resend", error);
+            }
+        } catch (mailErr) {
+            console.error("submitMothersDay2026LuckyDrawEntry email", mailErr);
+        }
+
+        return {
+            ok: true,
+            id: entryId,
+            discountCode,
+            discountExpiresAt: discountExpiresAtIso,
+        };
+    }
+);
+
+/**
+ * 公開：依登記時相同的手機 + Email 重寄母親節抽獎確認信（含海報與折扣碼）。
+ */
+exports.resendMothersDay2026LuckyDrawEmail = onCall(
+    { secrets: [resendApiKey] },
+    async (request) => {
+        const raw = request.data || {};
+        const emailDisp = String(raw.email || "").trim();
+        const emailNorm = emailDisp.toLowerCase();
+        const phoneNorm = String(raw.phone || "").replace(/\D/g, "");
+
+        if (emailDisp.length < 5 || emailDisp.length > 120 || emailNorm.length < 5) {
+            throw new HttpsError("invalid-argument", "請填寫有效的 Email。");
+        }
+        if (!/^09\d{8}$/.test(phoneNorm)) {
+            throw new HttpsError("invalid-argument", "請填寫 09 開頭的 10 碼手機。");
+        }
+
+        const doc = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
+        if (!doc) {
+            throw new HttpsError(
+                "not-found",
+                "查無符合的抽獎登記，請確認手機與 Email 與當初登記時一致。"
+            );
+        }
+
+        const snap = await ensureMothersDayEntryDiscountAndExpiry(doc);
+        const d = snap.data() || {};
+        const pNorm = String(d.phone || "").replace(/\D/g, "");
+        const em = String(d.email || "").trim().toLowerCase();
+        if (pNorm !== phoneNorm || em !== emailNorm) {
+            throw new HttpsError("permission-denied", "手機或 Email 與登記資料不符。");
+        }
+
+        const discountCode = String(d.discountCode || "");
+        if (!discountCode) {
+            throw new HttpsError("failed-precondition", "無法取得折扣碼，請稍後再試。");
+        }
+
+        const discountExpiresAtIso = discountExpiresIsoFromDoc(d);
+
+        try {
+            await sendMothersDayLuckyDrawEmailFromDocData(
+                resendApiKey.value(),
+                d,
+                emailDisp,
+                phoneNorm,
+                "resend"
+            );
+        } catch (e) {
+            console.error("resendMothersDay2026LuckyDrawEmail", e);
+            throw new HttpsError("internal", e.message || String(e));
+        }
+
+        return { ok: true, discountExpiresAt: discountExpiresAtIso };
+    }
+);
+
+/** 報名頁 `signup_page_settings/default` 海報 → 絕對網址（與前台 resolvePoster 行為一致） */
+async function getSignupPosterAbsoluteUrl() {
+    const origin = vibePublicOrigin.value().replace(/\/$/, "");
+    const snap = await db.collection("signup_page_settings").doc("default").get();
+    const raw = snap.exists ? String(snap.data()?.posterImageUrl || "").trim() : "";
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+        return raw;
+    }
+    const p = raw.startsWith("/") ? raw : `/${raw || "S__158801977.jpg"}`;
+    return `${origin}${p}`;
+}
+
+function buildVibeRegistrationConfirmationEmailHtml(opts) {
+    const esc = escapeHtml;
+    const {
+        posterSrc,
+        participantName,
+        sessionTitle,
+        sessionWhenText,
+        locationLine,
+        sessionNote,
+        feeLine,
+        paymentBlockHtml,
+        extraNote,
+    } = opts;
+    const noteBlock = sessionNote
+        ? `<p style="margin:12px 0 0;font-size:13px;color:#a1a1aa;">${esc(sessionNote)}</p>`
+        : "";
+    return `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f172a;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" style="max-width:520px;">
+<tr><td style="text-align:center;padding:0 0 16px;">
+<span style="display:inline-block;border:1px solid rgba(34,211,238,0.4);background:rgba(14,165,233,0.12);color:#7dd3fc;font-size:11px;font-weight:800;letter-spacing:0.08em;padding:8px 16px;border-radius:999px;">AI落地師培訓班｜報名通知</span>
+<h1 style="margin:16px 0 8px;font-size:22px;font-weight:900;color:#ffffff;line-height:1.35;">恭喜報名成功</h1>
+<p style="margin:0;font-size:14px;color:#94a3b8;line-height:1.65;">${esc(extraNote)}</p>
+</td></tr>
+<tr><td style="padding:0 0 16px;text-align:center;">
+<img src="${esc(posterSrc)}" alt="課程海報" width="520" style="max-width:100%;height:auto;display:block;border-radius:16px;border:1px solid rgba(255,255,255,0.12);"/>
+</td></tr>
+<tr><td style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:20px;">
+<h2 style="margin:0 0 12px;font-size:15px;font-weight:800;color:#38bdf8;">課程／場次</h2>
+<p style="margin:0 0 8px;font-size:15px;font-weight:800;color:#fff;">${esc(sessionTitle)}</p>
+<p style="margin:0;font-size:14px;color:#cbd5e1;line-height:1.55;">${esc(sessionWhenText)}</p>
+<p style="margin:10px 0 0;font-size:14px;color:#cbd5e1;line-height:1.55;">${esc(locationLine)}</p>
+${noteBlock}
+</td></tr>
+<tr><td style="height:14px;"></td></tr>
+<tr><td style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:20px;">
+<h2 style="margin:0 0 12px;font-size:15px;font-weight:800;color:#a5b4fc;">報名資料</h2>
+<p style="margin:0;font-size:14px;color:#e2e8f0;line-height:1.65;"><strong style="color:#94a3b8;">姓名</strong>　${esc(participantName)}</p>
+<p style="margin:10px 0 0;font-size:14px;color:#e2e8f0;"><strong style="color:#94a3b8;">應繳費用</strong>　${esc(feeLine)}</p>
+</td></tr>
+<tr><td style="height:14px;"></td></tr>
+<tr><td style="background:rgba(15,23,42,0.9);border:1px solid rgba(52,211,153,0.25);border-radius:18px;padding:20px;">
+<h2 style="margin:0 0 12px;font-size:15px;font-weight:800;color:#6ee7b7;">付款說明</h2>
+<div style="font-size:14px;color:#e2e8f0;line-height:1.65;">${paymentBlockHtml}</div>
+</td></tr>
+<tr><td style="padding:22px 8px 8px;text-align:center;font-size:11px;color:#64748b;line-height:1.55;">此信由系統自動發送。如有疑問請透過官方管道聯繫主辦。</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>`;
+}
+
+/**
+ * 公開：驗證母親節抽獎折扣碼（僅查詢，用於報名頁帶入資料與折價顯示）。
+ */
+exports.verifyMothersDayDiscountForCourseSignup = onCall(async (request) => {
+    const raw = String(request.data?.discountCode || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (raw.length !== 8) {
+        throw new HttpsError("invalid-argument", "折扣碼須為 8 碼英數字。");
+    }
+    const q = await db
+        .collection(VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COL)
+        .where("campaign", "==", MOTHERS_DAY_2026_CAMPAIGN_ID)
+        .where("discountCode", "==", raw)
+        .limit(1)
+        .get();
+    if (q.empty) {
+        throw new HttpsError("not-found", "查無此折扣碼，請確認母親節抽獎登記紀錄。");
+    }
+    const doc = q.docs[0];
+    const d = doc.data() || {};
+    const expMs = d.discountExpiresAt?.toMillis?.() ?? 0;
+    if (expMs > 0 && expMs < Date.now()) {
+        throw new HttpsError("failed-precondition", "此折扣碼已超過使用期限（登記日起算 30 日）。");
+    }
+    if (d.courseDiscountRedeemedAt != null) {
+        throw new HttpsError("failed-precondition", "此折扣碼已用於課程報名。");
+    }
+    const phoneNorm = String(d.phone || "").replace(/\D/g, "");
+    const emailDisp = String(d.email || "").trim();
+    return {
+        ok: true,
+        lotteryEntryId: doc.id,
+        discountCode: raw,
+        discountAmountNtd: MOTHERS_DAY_COURSE_DISCOUNT_NTD,
+        name: String(d.name || "").trim(),
+        email: emailDisp,
+        phone: phoneNorm,
+    };
+});
+
+/**
+ * 公開：正課報名建立後核銷母親節折扣碼（須與抽獎登記姓名／手機／Email 一致）。
+ */
+exports.redeemMothersDayCourseDiscount = onCall(async (request) => {
+    const raw = request.data || {};
+    const lotteryEntryId = String(raw.lotteryEntryId || "").trim();
+    const discountCode = String(raw.discountCode || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const registrationId = String(raw.registrationId || "").trim();
+    const emailDisp = String(raw.email || "").trim();
+    const emailNorm = emailDisp.toLowerCase();
+    const phoneNorm = String(raw.phone || "").replace(/\D/g, "");
+    const sessionListPrice = Number(raw.sessionListPrice);
+
+    if (!lotteryEntryId || !registrationId) {
+        throw new HttpsError("invalid-argument", "缺少 lotteryEntryId 或 registrationId。");
+    }
+    if (discountCode.length !== 8) {
+        throw new HttpsError("invalid-argument", "折扣碼格式不正確。");
+    }
+    if (!/^09\d{8}$/.test(phoneNorm)) {
+        throw new HttpsError("invalid-argument", "手機格式不正確。");
+    }
+    if (!emailNorm || emailDisp.length < 5) {
+        throw new HttpsError("invalid-argument", "Email 不正確。");
+    }
+    if (!Number.isFinite(sessionListPrice) || sessionListPrice <= 0) {
+        throw new HttpsError("invalid-argument", "場次金額不正確。");
+    }
+
+    const expectedDiscounted = Math.max(0, sessionListPrice - MOTHERS_DAY_COURSE_DISCOUNT_NTD);
+    const lotteryRef = db.collection(VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COL).doc(lotteryEntryId);
+    const regRef = db.collection(VIBE_REGISTRATIONS_COL).doc(registrationId);
+
+    await db.runTransaction(async (tx) => {
+        const [lotterySnap, regSnap] = await Promise.all([tx.get(lotteryRef), tx.get(regRef)]);
+        if (!lotterySnap.exists) {
+            throw new HttpsError("not-found", "折扣資料不存在。");
+        }
+        if (!regSnap.exists) {
+            throw new HttpsError("not-found", "報名紀錄不存在。");
+        }
+        const L = lotterySnap.data() || {};
+        const R = regSnap.data() || {};
+        if (String(L.discountCode || "").toUpperCase() !== discountCode) {
+            throw new HttpsError("permission-denied", "折扣碼不符。");
+        }
+        if (L.campaign !== MOTHERS_DAY_2026_CAMPAIGN_ID) {
+            throw new HttpsError("permission-denied", "活動不符。");
+        }
+        const expMs = L.discountExpiresAt?.toMillis?.() ?? 0;
+        if (expMs > 0 && expMs < Date.now()) {
+            throw new HttpsError("failed-precondition", "折扣碼已過期。");
+        }
+        if (L.courseDiscountRedeemedAt != null) {
+            throw new HttpsError("failed-precondition", "此折扣碼已核銷。");
+        }
+        const lPhone = String(L.phone || "").replace(/\D/g, "");
+        const lEmail = String(L.email || "").trim().toLowerCase();
+        const lName = String(L.name || "").trim();
+        if (lPhone !== phoneNorm || lEmail !== emailNorm) {
+            throw new HttpsError("permission-denied", "姓名／手機／Email 須與抽獎登記資料一致。");
+        }
+        if (String(R.email || "").trim().toLowerCase() !== emailNorm) {
+            throw new HttpsError("permission-denied", "報名 Email 與折扣資料不一致。");
+        }
+        if (String(R.phone || "").replace(/\D/g, "") !== phoneNorm) {
+            throw new HttpsError("permission-denied", "報名手機與折扣資料不一致。");
+        }
+        const normN = (x) => String(x || "").trim().replace(/\s+/g, " ");
+        if (normN(R.name) !== normN(lName)) {
+            throw new HttpsError("permission-denied", "報名姓名須與抽獎登記姓名一致。");
+        }
+        if (String(R.registrationKind || "") === "refresher" || R.isTimeNotAvailable === true) {
+            throw new HttpsError("failed-precondition", "僅限正課報名可使用此折扣。");
+        }
+        const ef = Number(R.expectedFee);
+        if (!Number.isFinite(ef) || ef !== expectedDiscounted) {
+            throw new HttpsError(
+                "failed-precondition",
+                `應繳金額與折扣計算不符（預期 ${expectedDiscounted}）。請勿手動修改金額欄位。`
+            );
+        }
+        if (String(R.mothersDayDiscountCode || "").toUpperCase() !== discountCode) {
+            throw new HttpsError("permission-denied", "報名資料未正確帶入折扣碼。");
+        }
+        tx.update(lotteryRef, {
+            courseDiscountRedeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+            courseDiscountRegistrationId: registrationId,
+        });
+    });
+
+    return { ok: true, discountedFee: expectedDiscounted };
+});
+
+/**
+ * 公開：報名送出後寄送「恭喜報名成功／請儘速匯款」通知（含課程資訊、後台設定海報、匯款資訊）。
+ */
+exports.sendVibeCourseRegistrationConfirmationEmail = onCall(
+    { secrets: [resendApiKey] },
+    async (request) => {
+        const registrationId = String(request.data?.registrationId || "").trim();
+        if (!registrationId) {
+            throw new HttpsError("invalid-argument", "缺少 registrationId。");
+        }
+        const regSnap = await db.collection(VIBE_REGISTRATIONS_COL).doc(registrationId).get();
+        if (!regSnap.exists) {
+            throw new HttpsError("not-found", "找不到報名資料。");
+        }
+        const reg = regSnap.data() || {};
+        const to = String(reg.email || "").trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+            throw new HttpsError("failed-precondition", "報名資料缺少有效 Email。");
+        }
+
+        const posterSrc = await getSignupPosterAbsoluteUrl();
+        const participantName = String(reg.name || "").trim() || "—";
+        const isWish = reg.isTimeNotAvailable === true;
+        const isRef = String(reg.registrationKind || "") === "refresher";
+        const isMain = !isWish && !isRef;
+
+        let sessionTitle = "—";
+        let sessionWhenText = "—";
+        let locationLine = "—";
+        let sessionNote = "";
+        const sid = String(reg.sessionId || "").trim();
+        if (!isWish && sid) {
+            const sessSnap = await db.collection(VIBE_SESSIONS_COL).doc(sid).get();
+            if (sessSnap.exists) {
+                const s = sessSnap.data() || {};
+                sessionTitle = String(reg.sessionTitle || s.title || "AI落地師培訓班").trim();
+                const dt = reg.sessionDate || s.date || "";
+                sessionWhenText = dt ? `日期／時間：${String(dt)}` : "—";
+                const loc = String(reg.sessionLocation || s.location || "").trim() || "—";
+                const addr = String(reg.sessionAddress || s.address || "").trim();
+                locationLine = addr ? `${loc}（${addr}）` : loc;
+                sessionNote = String(s.note || "").trim();
+            } else {
+                sessionTitle = String(reg.sessionTitle || "場次").trim();
+                sessionWhenText = reg.sessionDate ? `日期／時間：${String(reg.sessionDate)}` : "—";
+                locationLine = [reg.sessionLocation, reg.sessionAddress].filter(Boolean).join(" ") || "—";
+            }
+        } else if (isWish) {
+            sessionTitle = "以上場次時間無法配合（許願）";
+            sessionWhenText = `許願時間：${String(reg.wishTime || "—")}`;
+            locationLine = `許願地點：${String(reg.wishLocation || "—")}`;
+        }
+
+        const listPrice = Number(reg.sessionListPriceNtd ?? reg.expectedFee ?? 0);
+        const expectedFee = Number(reg.expectedFee ?? 0);
+        const discAmt = Number(reg.mothersDayDiscountAmountNtd || 0);
+        let feeLine = `${expectedFee.toLocaleString()} 元`;
+        if (isMain && discAmt > 0) {
+            feeLine = `原價 ${listPrice.toLocaleString()} 元，母親節折扣 −${discAmt.toLocaleString()} 元，應繳 ${expectedFee.toLocaleString()} 元`;
+        } else if (isRef) {
+            feeLine = `複訓現場繳費 ${expectedFee.toLocaleString()} 元`;
+        } else if (isWish) {
+            feeLine = "許願登記（無須匯款）";
+        }
+
+        let paymentBlockHtml = "";
+        let extraNote =
+            "我們已收到您的報名資料。請依下列說明完成後續步驟。";
+
+        if (isMain) {
+            extraNote =
+                "恭喜您完成報名登記！請儘速依下方匯款資訊完成轉帳，並保留匯款後五碼以利對帳。";
+            paymentBlockHtml = `
+<p style="margin:0 0 12px;font-weight:700;color:#fde047;">請於時限內完成匯款（依簡訊／官方公告為準）</p>
+<table role="presentation" width="100%" style="font-size:14px;color:#e2e8f0;">
+<tr><td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);"><span style="color:#94a3b8;">銀行</span>　國泰世華 (013) 敦化分行</td></tr>
+<tr><td style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);"><span style="color:#94a3b8;">戶名</span>　焙獅健康顧問有限公司</td></tr>
+<tr><td style="padding:8px 0;"><span style="color:#94a3b8;">帳號</span>　<span style="font-size:18px;font-weight:900;color:#38bdf8;letter-spacing:0.06em;">212035012017</span></td></tr>
+</table>
+<p style="margin:14px 0 0;font-size:13px;color:#cbd5e1;">報名時填寫的匯款帳號<strong>後五碼</strong>將作為對帳依據，請務必正確填寫。</p>
+`;
+        } else if (isRef) {
+            extraNote = "恭喜您完成複訓報名！請於上課當天依現場指示繳交複訓費用。";
+            paymentBlockHtml =
+                '<p style="margin:0;">複訓費用於<strong>上課當天現場繳交現金</strong>，無須事先匯款。</p>';
+        } else {
+            paymentBlockHtml =
+                '<p style="margin:0;">本次為許願／登記用途，無須匯款；後續若有開課將另行通知。</p>';
+        }
+
+        const html = buildVibeRegistrationConfirmationEmailHtml({
+            posterSrc,
+            participantName,
+            sessionTitle,
+            sessionWhenText,
+            locationLine,
+            sessionNote,
+            feeLine,
+            paymentBlockHtml,
+            extraNote,
+        });
+
+        const subject = `【AI落地師】報名成功｜請確認場次與繳費 — ${participantName}`;
+        const from = resendFromEmail.value();
+        try {
+            const resend = new Resend(resendApiKey.value());
+            const { error } = await resend.emails.send({
+                from,
+                to,
+                subject,
+                html,
+            });
+            if (error) {
+                console.error("sendVibeCourseRegistrationConfirmationEmail resend", error);
+                throw new HttpsError("internal", error.message || "寄送失敗。");
+            }
+        } catch (e) {
+            if (e instanceof HttpsError) {
+                throw e;
+            }
+            console.error("sendVibeCourseRegistrationConfirmationEmail", e);
+            throw new HttpsError("internal", e.message || String(e));
+        }
+
+        return { ok: true };
+    }
+);
 
 exports.createVibeSession = onCall(async (request) => {
     await assertAdmin(request);
@@ -785,6 +1550,86 @@ function escapeHtml(s) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+}
+
+/** 母親節抽獎登記成功通知：含海報圖、登記資料、專屬折扣碼 */
+function buildMothersDayLuckyDrawConfirmationEmailHtml(opts) {
+    const {
+        origin,
+        name,
+        email,
+        phone,
+        referralCode,
+        referrerSnapshot,
+        prizeSummary,
+        drawAnnouncementNote,
+        discountCode,
+        discountExpiryLabel = "",
+        emailHeadline = "登記已成功",
+        emailBadgeLabel = "母親節限定｜抽獎登記成功",
+        emailLeadParagraph,
+    } = opts;
+    const esc = escapeHtml;
+    const posterUrl = `${String(origin).replace(/\/$/, "")}/mother.png`;
+    const refLine =
+        referrerSnapshot && String(referrerSnapshot).trim()
+            ? `${esc(referrerSnapshot)}（推薦碼 ${esc(referralCode)}）`
+            : `推薦碼 ${esc(referralCode)}`;
+
+    return `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;background:#0a0a0a;color:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0a0a0a;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" style="max-width:480px;">
+<tr><td style="text-align:center;padding:0 0 16px;">
+<span style="display:inline-block;border:1px solid rgba(185,28,28,0.55);background:rgba(127,29,29,0.35);color:#fecaca;font-size:11px;font-weight:800;letter-spacing:0.08em;padding:8px 16px;border-radius:999px;">${esc(emailBadgeLabel)}</span>
+<h1 style="margin:16px 0 8px;font-size:22px;font-weight:900;color:#ffffff;line-height:1.35;">${esc(emailHeadline)}</h1>
+<p style="margin:0;font-size:14px;color:#a1a1aa;line-height:1.6;">${esc(
+        emailLeadParagraph ||
+            "感謝您完成母親節抽獎登記。以下為您的登記摘要與專屬折扣碼（請妥善保存）。折扣碼限登記日起 30 日內使用。"
+    )}</p>
+</td></tr>
+<tr><td style="padding:0 0 16px;text-align:center;">
+<img src="${esc(posterUrl)}" alt="母親節抽獎活動海報" width="480" style="max-width:100%;height:auto;display:block;border-radius:16px;border:1px solid rgba(185,28,28,0.35);"/>
+</td></tr>
+<tr><td style="background:rgba(250,204,21,0.08);border:1px solid rgba(212,175,55,0.55);border-radius:18px;padding:18px 20px;margin-bottom:16px;">
+<p style="margin:0 0 10px;font-size:13px;font-weight:800;color:#fde047;letter-spacing:0.04em;">您的折扣碼（8 碼英數字）</p>
+<p style="margin:0;font-size:28px;font-weight:900;letter-spacing:0.18em;color:#ffffff;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${esc(discountCode)}</p>
+${discountExpiryLabel ? `<p style="margin:14px 0 0;font-size:13px;color:#fde68a;line-height:1.55;text-align:center;">使用期限：${esc(discountExpiryLabel)} 前有效<br/><span style="font-size:11px;color:#a1a1aa;">（自登記完成時刻起算 30 日）</span></p>` : ""}
+</td></tr>
+<tr><td style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:20px;">
+<h2 style="margin:0 0 14px;font-size:15px;font-weight:800;color:#fda4af;">登記資料</h2>
+<table role="presentation" width="100%" style="font-size:14px;color:#e4e4e7;line-height:1.55;">
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);margin-bottom:8px;display:block;"><strong style="color:#a1a1aa;">姓名</strong>　${esc(name)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);display:block;"><strong style="color:#a1a1aa;">Email</strong>　${esc(email)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);display:block;"><strong style="color:#a1a1aa;">手機</strong>　${esc(phone)}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);display:block;"><strong style="color:#a1a1aa;">推薦來源</strong>　${refLine}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);display:block;"><strong style="color:#a1a1aa;">獎項摘要</strong>　${esc(prizeSummary || "—")}</td></tr>
+<tr><td style="height:8px;"></td></tr>
+<tr><td style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.25);display:block;"><strong style="color:#a1a1aa;">開獎／備註</strong>　${esc(drawAnnouncementNote || "—")}</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:20px 8px 8px;text-align:center;font-size:11px;color:#71717a;line-height:1.55;">貼文留言為抽獎資格必要條件，請依活動貼文說明完成留言。<br/>此信由系統自動發送，回信不一定即時回覆；如需協助請透過主辦管道聯繫。</td></tr>
+</table>
+</td></tr></table>
+</body>
+</html>`;
+}
+
+/** 8 碼英數字折扣碼（大寫字母 + 數字） */
+function randomAlphanumericDiscountCode8() {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let out = "";
+    for (let i = 0; i < 8; i++) {
+        out += chars[crypto.randomInt(0, chars.length)];
+    }
+    return out;
 }
 
 function buildLocationLine(reg) {

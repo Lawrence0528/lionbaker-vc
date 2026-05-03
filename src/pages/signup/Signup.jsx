@@ -7,6 +7,7 @@ import {
     SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
     VIBE_REFERRAL_CODES_COLLECTION,
     normalizeVibeSignupRefParam,
+    VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW,
 } from './signupLandingShared';
 import { useSignupLandingSettings } from './useSignupLandingSettings';
 import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
@@ -132,6 +133,33 @@ const Signup = () => {
     const [signupReferralMeta, setSignupReferralMeta] = useState(null);
     const [signupReferralCode, setSignupReferralCode] = useState('');
     const [signupRefUrlNotice, setSignupRefUrlNotice] = useState('');
+    /** 對應推薦文件 `joinActivityLuckyDraw`：為 true 時顯示活動／抽獎區 */
+    const [referralJoinActivityLuckyDraw, setReferralJoinActivityLuckyDraw] = useState(false);
+    const [luckyDrawName, setLuckyDrawName] = useState('');
+    const [luckyDrawEmail, setLuckyDrawEmail] = useState('');
+    const [luckyDrawPhone, setLuckyDrawPhone] = useState('');
+    const [luckyDrawSubmitting, setLuckyDrawSubmitting] = useState(false);
+    /** 獨立抽獎送出回饋（不影響課程報名的 error） */
+    const [luckyDrawFeedback, setLuckyDrawFeedback] = useState({ tone: '', text: '' });
+    /** 登記成功後由後端回傳的 8 碼折扣碼 */
+    const [luckyDrawDiscountCode, setLuckyDrawDiscountCode] = useState('');
+    const [luckyDrawCodeCopied, setLuckyDrawCodeCopied] = useState(false);
+    /** ISO 字串；折扣碼須於此前（登記日起算 30 日）前使用 */
+    const [luckyDrawDiscountExpiresAt, setLuckyDrawDiscountExpiresAt] = useState('');
+    /** 後端回傳已登記時為 true，文案改為「您已參加過…」 */
+    const [luckyDrawAlreadyRegistered, setLuckyDrawAlreadyRegistered] = useState(false);
+    /** 供重寄信：送出當下的 Email／手機（成功後表單可能清空） */
+    const [luckyDrawContactLocked, setLuckyDrawContactLocked] = useState(null);
+    const [luckyDrawResendBusy, setLuckyDrawResendBusy] = useState(false);
+
+    /** 母親節抽獎折扣碼：正課折抵、帶入聯絡資料、鎖定複訓 */
+    const [courseDiscountInput, setCourseDiscountInput] = useState('');
+    const [courseDiscountVerified, setCourseDiscountVerified] = useState(false);
+    const [courseDiscountLoading, setCourseDiscountLoading] = useState(false);
+    const [courseDiscountError, setCourseDiscountError] = useState('');
+    const [courseDiscountAmountNtd, setCourseDiscountAmountNtd] = useState(100);
+    const [courseLotteryEntryId, setCourseLotteryEntryId] = useState('');
+    const [courseDiscountCodeNormalized, setCourseDiscountCodeNormalized] = useState('');
 
     const parallaxOffset = useParallax(0.25);
 
@@ -176,6 +204,7 @@ const Signup = () => {
 
         const alnum = normalizeVibeSignupRefParam(raw);
         if (alnum.length !== 8) {
+            setReferralJoinActivityLuckyDraw(false);
             setSignupRefUrlNotice('推薦連結代碼須為 8 碼英數字，請向主辦確認網址。');
             return;
         }
@@ -186,6 +215,7 @@ const Signup = () => {
                 const snap = await getDoc(doc(db, VIBE_REFERRAL_CODES_COLLECTION, alnum));
                 if (cancelled) return;
                 if (!snap.exists()) {
+                    setReferralJoinActivityLuckyDraw(false);
                     setSignupRefUrlNotice('查無此推薦連結代碼，請改用手動選擇「推薦人 / 來源」。');
                     return;
                 }
@@ -193,17 +223,20 @@ const Signup = () => {
                 const refName = String(row.referrerName || '').trim();
                 const upper = String(row.upperReferrerName || '').trim();
                 if (!refName) {
+                    setReferralJoinActivityLuckyDraw(false);
                     setSignupRefUrlNotice('此推薦連結資料未設定姓名，請聯絡主辦或使用手動來源。');
                     return;
                 }
                 setSignupReferralLocked(true);
                 setSignupReferralMeta({ referrerName: refName, upperReferrerName: upper });
                 setSignupReferralCode(alnum);
+                setReferralJoinActivityLuckyDraw(Boolean(row[VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW]));
                 setSignupRefUrlNotice('');
                 setFormData(prev => ({ ...prev, source: refName }));
             } catch (e) {
                 if (!cancelled) {
                     console.error('resolve referral ref', e);
+                    setReferralJoinActivityLuckyDraw(false);
                     setSignupRefUrlNotice('無法載入推薦連結資料，請稍後再試或改用手動選擇來源。');
                 }
             }
@@ -286,15 +319,203 @@ const Signup = () => {
 
     const handleChange = (e) => { const { name, value } = e.target; setFormData(prev => ({ ...prev, [name]: value })); };
     const handlePhoneChange = (e) => { const digits = e.target.value.replace(/\D/g, '').slice(0, 10); setFormData(prev => ({ ...prev, phone: digits })); };
+    const handleLuckyDrawPhoneChange = (e) => { setLuckyDrawPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); };
+
+    const formatLuckyDrawExpiryZh = useCallback((iso) => {
+        if (!iso) return '';
+        const ms = Date.parse(iso);
+        const d = new Date(Number.isFinite(ms) ? ms : Date.now());
+        return d.toLocaleString('zh-TW', {
+            timeZone: 'Asia/Taipei',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    }, []);
+
+    const handleLuckyDrawResendEmail = async () => {
+        const email = luckyDrawContactLocked?.email?.trim() || luckyDrawEmail.trim();
+        const phone = luckyDrawContactLocked?.phone || luckyDrawPhone;
+        if (!email || !isValidTaiwanMobileDigits(phone)) {
+            setLuckyDrawFeedback({ tone: 'err', text: '請先完成登記或保留登記時的手機與 Email。' });
+            return;
+        }
+        setLuckyDrawResendBusy(true);
+        setLuckyDrawFeedback({ tone: '', text: '' });
+        try {
+            const resendFn = httpsCallable(functions, 'resendMothersDay2026LuckyDrawEmail');
+            await resendFn({ email, phone });
+            setLuckyDrawFeedback({
+                tone: 'ok',
+                text: '確認信已重新寄出，請稍候查看信箱（含垃圾信匣）。',
+            });
+        } catch (err) {
+            console.error('lucky draw resend', err);
+            const msg = typeof err?.message === 'string' ? err.message.trim() : '';
+            setLuckyDrawFeedback({
+                tone: 'err',
+                text: msg || '重寄失敗，請確認手機與 Email 與登記時完全一致後再試。',
+            });
+        } finally {
+            setLuckyDrawResendBusy(false);
+        }
+    };
+
+    const handleLuckyDrawSubmit = async (e) => {
+        e.preventDefault();
+        if (!signupReferralLocked || !referralJoinActivityLuckyDraw || !signupReferralCode) return;
+        setLuckyDrawFeedback({ tone: '', text: '' });
+
+        const name = luckyDrawName.trim();
+        if (!name) {
+            setLuckyDrawFeedback({ tone: 'err', text: '請填寫姓名。' });
+            return;
+        }
+        if (!isValidEmailFormat(luckyDrawEmail)) {
+            setLuckyDrawFeedback({ tone: 'err', text: '請填寫有效的 Email。' });
+            return;
+        }
+        if (!isValidTaiwanMobileDigits(luckyDrawPhone)) {
+            setLuckyDrawFeedback({ tone: 'err', text: '手機須為 09 開頭的 10 碼數字。' });
+            return;
+        }
+
+        const submittedEmail = luckyDrawEmail.trim();
+        const submittedPhone = luckyDrawPhone;
+
+        setLuckyDrawSubmitting(true);
+        try {
+            const submitLucky = httpsCallable(functions, 'submitMothersDay2026LuckyDrawEntry');
+            const { data } = await submitLucky({
+                name,
+                email: submittedEmail,
+                phone: submittedPhone,
+                referralCode: signupReferralCode,
+                referrerSnapshot: signupReferralMeta?.referrerName ? String(signupReferralMeta.referrerName).trim().slice(0, 80) : '',
+                prizeSummary: '2026年5月30日（六）AI落地師一日課程｜乙名｜免費上課名額',
+                commentOnPostRequired: true,
+                drawAnnouncementNote: '2026年5月11日開獎',
+                lineUserId: lineProfile?.userId || '',
+            });
+
+            const code = typeof data?.discountCode === 'string' ? data.discountCode.trim() : '';
+            const expIso = typeof data?.discountExpiresAt === 'string' ? data.discountExpiresAt.trim() : '';
+
+            setLuckyDrawContactLocked({ email: submittedEmail, phone: submittedPhone });
+            setLuckyDrawDiscountExpiresAt(expIso);
+            setLuckyDrawDiscountCode(code);
+            setLuckyDrawCodeCopied(false);
+
+            if (data?.alreadyRegistered) {
+                setLuckyDrawAlreadyRegistered(true);
+                setLuckyDrawFeedback({
+                    tone: 'info',
+                    text:
+                        (typeof data?.message === 'string' && data.message.trim()
+                            ? data.message.trim()
+                            : '您已參加過母親節抽獎活動。') +
+                        ' 系統已再次寄送確認信至您的 Email（若未收到請查看垃圾信匣，或使用下方重寄）。',
+                });
+                return;
+            }
+
+            setLuckyDrawAlreadyRegistered(false);
+            setLuckyDrawFeedback({
+                tone: 'ok',
+                text: '登記成功！已寄送確認信至您的 Email（含海報與折扣碼）。請務必先完成貼文留言以利抽獎資格認定。',
+            });
+            setLuckyDrawName('');
+            setLuckyDrawEmail('');
+            setLuckyDrawPhone('');
+        } catch (err) {
+            console.error('lucky draw submit', err);
+            const code = typeof err?.code === 'string' ? err.code : '';
+            if (code === 'functions/already-exists') {
+                setLuckyDrawFeedback({
+                    tone: 'err',
+                    text: err.message?.trim?.() ||
+                        '此手機或 Email 已登記過母親節抽獎，每人限乙次（不分推薦連結）。',
+                });
+                return;
+            }
+            setLuckyDrawFeedback({ tone: 'err', text: '送出失敗，請檢查網路後再試。' });
+        } finally {
+            setLuckyDrawSubmitting(false);
+        }
+    };
     const handleTaxIdInput = (e) => { const digits = normalizeGuiInput(e.target.value); setFormData(prev => ({ ...prev, taxId: digits })); };
 
     const handleSessionSelect = (sessionId) => {
         const nextId = String(sessionId);
         if (!SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && nextId === 'time_not_available') return;
         setSelectedSessionId(nextId);
-        if (nextId !== 'time_not_available') setFormData(prev => ({ ...prev, isTimeNotAvailable: false, wishTime: '', wishLocation: '', previousSessionId: '' }));
-        else setFormData(prev => ({ ...prev, isTimeNotAvailable: true, registrationKind: 'main', previousSessionId: '' }));
+        if (nextId === 'time_not_available') {
+            setCourseDiscountInput('');
+            setCourseDiscountVerified(false);
+            setCourseLotteryEntryId('');
+            setCourseDiscountCodeNormalized('');
+            setCourseDiscountError('');
+            setFormData(prev => ({ ...prev, isTimeNotAvailable: true, registrationKind: 'main', previousSessionId: '' }));
+        } else {
+            setFormData(prev => ({ ...prev, isTimeNotAvailable: false, wishTime: '', wishLocation: '', previousSessionId: '' }));
+        }
     };
+
+    const clearCourseDiscount = useCallback(() => {
+        setCourseDiscountVerified(false);
+        setCourseLotteryEntryId('');
+        setCourseDiscountCodeNormalized('');
+        setCourseDiscountError('');
+        setCourseDiscountAmountNtd(100);
+    }, []);
+
+    const handleApplyCourseDiscount = async () => {
+        setCourseDiscountError('');
+        const code = String(courseDiscountInput).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (code.length !== 8) {
+            setCourseDiscountError('請輸入 8 碼英數字折扣碼。');
+            return;
+        }
+        setCourseDiscountLoading(true);
+        try {
+            const verifyFn = httpsCallable(functions, 'verifyMothersDayDiscountForCourseSignup');
+            const { data } = await verifyFn({ discountCode: code });
+            if (!data?.ok) {
+                setCourseDiscountError('無法驗證折扣碼。');
+                return;
+            }
+            const amt = Number(data.discountAmountNtd);
+            setCourseDiscountVerified(true);
+            setCourseDiscountAmountNtd(Number.isFinite(amt) && amt > 0 ? amt : 100);
+            setCourseLotteryEntryId(String(data.lotteryEntryId || ''));
+            setCourseDiscountCodeNormalized(String(data.discountCode || code));
+            setFormData((prev) => ({
+                ...prev,
+                registrationKind: 'main',
+                name: String(data.name || '').trim(),
+                phone: String(data.phone || '').replace(/\D/g, '').slice(0, 10),
+                email: String(data.email || '').trim(),
+            }));
+        } catch (err) {
+            console.error('course discount verify', err);
+            setCourseDiscountVerified(false);
+            setCourseLotteryEntryId('');
+            setCourseDiscountCodeNormalized('');
+            const msg = typeof err?.message === 'string' ? err.message.trim() : '';
+            setCourseDiscountError(msg || '查無有效折扣碼或已失效。');
+        } finally {
+            setCourseDiscountLoading(false);
+        }
+    };
+
+    const computeMainPriceAfterDiscount = useCallback((listPrice) => {
+        const n = Number(listPrice) || 0;
+        if (!courseDiscountVerified) return n;
+        return Math.max(0, n - courseDiscountAmountNtd);
+    }, [courseDiscountVerified, courseDiscountAmountNtd]);
 
     const handleSubmit = async (e) => {
         e.preventDefault(); setError('');
@@ -325,12 +546,22 @@ const Signup = () => {
             if (String(formData.previousSessionId) === String(selectedSessionId)) { setError('曾參加之場次不可與本場次相同。'); return; }
         }
         if (isMain) { if (formData.lastFive.length !== 5) { setError('匯款後五碼必須為 5 碼'); return; } }
+        if (courseDiscountVerified && (formData.isTimeNotAvailable || !isMain)) {
+            setError('母親節折扣碼僅適用正課報名，請移除折扣或改選一般場次。');
+            return;
+        }
         setLoading(true);
         try {
             const checkDup = httpsCallable(functions, 'checkVibeRegistrationDuplicate');
             const dupResult = await checkDup({ sessionId: selectedSessionId, email: formData.email.trim(), phone: formData.phone });
             if (dupResult.data?.duplicate) { setError('此手機或 Email 已用於本場次報名，若為本人重複送出請聯絡主辦；若誤用他人聯絡方式請改填正確資料。'); return; }
             const selectedSession = sessions.find(s => s.id === selectedSessionId);
+            const listPriceNtd = Number(selectedSession?.price) || 0;
+            const expectedMainFee = formData.isTimeNotAvailable
+                ? 0
+                : isRefresher
+                  ? REFRESHER_FEE
+                  : computeMainPriceAfterDiscount(listPriceNtd);
             const previousSession = isRefresher ? closedSessionsForRefresher.find((s) => s.id === formData.previousSessionId) || null : null;
             const sessionInfo = {
                 sessionId: selectedSessionId,
@@ -372,16 +603,78 @@ const Signup = () => {
                 status: 'pending',
                 ...sessionInfo,
             };
+            const discountExtra = {
+                mothersDayDiscountCode: isMain && courseDiscountVerified ? courseDiscountCodeNormalized : null,
+                mothersDayDiscountAmountNtd: isMain && courseDiscountVerified ? courseDiscountAmountNtd : null,
+                sessionListPriceNtd: isMain ? listPriceNtd : null,
+            };
+
+            let docRef;
             if (formData.isTimeNotAvailable) {
-                await addDoc(collection(db, 'registrations_vibe'), { ...basePayload, invoiceType: 'general', taxId: null, registrationKind: 'main', previousSessionId: null, previousSessionTitle: null, previousSessionDate: null, paymentMethod: 'none', lastFive: '', expectedFee: 0 });
+                docRef = await addDoc(collection(db, 'registrations_vibe'), {
+                    ...basePayload,
+                    invoiceType: 'general',
+                    taxId: null,
+                    registrationKind: 'main',
+                    previousSessionId: null,
+                    previousSessionTitle: null,
+                    previousSessionDate: null,
+                    paymentMethod: 'none',
+                    lastFive: '',
+                    expectedFee: 0,
+                    mothersDayDiscountCode: null,
+                    mothersDayDiscountAmountNtd: null,
+                    sessionListPriceNtd: null,
+                });
             } else {
-                await addDoc(collection(db, 'registrations_vibe'), { ...basePayload, invoiceType: isRefresher ? 'refresher_exempt' : formData.invoiceType, taxId: isRefresher ? null : (formData.invoiceType === 'tax_id' ? normalizedTaxId : null), registrationKind: formData.registrationKind, previousSessionId: isRefresher ? formData.previousSessionId : null, previousSessionTitle: isRefresher ? (formatRefresherPreviousLabel(previousSession) || previousSession?.title || null) : null, previousSessionDate: isRefresher && previousSession?.date ? String(previousSession.date) : null, paymentMethod: isRefresher ? 'on_site' : 'transfer', lastFive: isMain ? formData.lastFive : '', expectedFee: isRefresher ? REFRESHER_FEE : (Number(selectedSession?.price) || 0) });
+                docRef = await addDoc(collection(db, 'registrations_vibe'), {
+                    ...basePayload,
+                    ...discountExtra,
+                    invoiceType: isRefresher ? 'refresher_exempt' : formData.invoiceType,
+                    taxId: isRefresher ? null : (formData.invoiceType === 'tax_id' ? normalizedTaxId : null),
+                    registrationKind: formData.registrationKind,
+                    previousSessionId: isRefresher ? formData.previousSessionId : null,
+                    previousSessionTitle: isRefresher ? (formatRefresherPreviousLabel(previousSession) || previousSession?.title || null) : null,
+                    previousSessionDate: isRefresher && previousSession?.date ? String(previousSession.date) : null,
+                    paymentMethod: isRefresher ? 'on_site' : 'transfer',
+                    lastFive: isMain ? formData.lastFive : '',
+                    expectedFee: isRefresher ? REFRESHER_FEE : expectedMainFee,
+                });
             }
+
+            if (!formData.isTimeNotAvailable && isMain && courseDiscountVerified && courseLotteryEntryId && courseDiscountCodeNormalized) {
+                try {
+                    const redeemFn = httpsCallable(functions, 'redeemMothersDayCourseDiscount');
+                    await redeemFn({
+                        lotteryEntryId: courseLotteryEntryId,
+                        registrationId: docRef.id,
+                        discountCode: courseDiscountCodeNormalized,
+                        email: formData.email.trim(),
+                        phone: formData.phone,
+                        sessionListPrice: listPriceNtd,
+                    });
+                } catch (redeemErr) {
+                    console.error('redeem mothers day discount', redeemErr);
+                    setError('報名已送出，但折扣碼未能完成核銷；請勿重複報名，並請截圖聯絡主辦確認應繳金額。');
+                    return;
+                }
+            }
+
+            try {
+                const mailFn = httpsCallable(functions, 'sendVibeCourseRegistrationConfirmationEmail');
+                await mailFn({ registrationId: docRef.id });
+            } catch (mailErr) {
+                console.error('signup confirmation email', mailErr);
+            }
+
             if (isLiffLoggedIn && liff.isInClient()) {
+                const feeLine = !formData.isTimeNotAvailable && isMain && courseDiscountVerified
+                    ? `\n應繳費用：${expectedMainFee.toLocaleString()} 元（已套用母親節折扣）`
+                    : (!formData.isTimeNotAvailable && isMain ? `\n應繳費用：${expectedMainFee.toLocaleString()} 元` : '');
                 const methodText = formData.isTimeNotAvailable ? '' : (isRefresher ? `\n報名類型：複訓（${REFRESHER_FEE} 元現場繳費）\n前次參加：${formatRefresherPreviousLabel(previousSession) || previousSession?.title || '-'}` : `\n匯款後五碼：${formData.lastFive}`);
                 const sessionText = formData.isTimeNotAvailable ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}` : (selectedSession?.displayDate || '2026/02/08');
                 const kindLine = !formData.isTimeNotAvailable && isMain ? '\n報名類型：正課' : '';
-                await liff.sendMessages([{ type: 'text', text: `【報名成功】\n姓名：${formData.name}\n場次：${sessionText}${kindLine}${methodText}\n\n感謝您的報名，我們已收到您的資訊！` }]);
+                await liff.sendMessages([{ type: 'text', text: `【報名成功】\n姓名：${formData.name}\n場次：${sessionText}${kindLine}${feeLine}${methodText}\n\n感謝您的報名，我們已收到您的資訊！` }]);
             }
             setSuccess(true); window.scrollTo(0, 0);
         } catch (err) { console.error(err); setError('報名失敗，請檢查網路連線或稍後再試。'); }
@@ -558,6 +851,152 @@ const Signup = () => {
                         {/* ── Left: Course Info ─────────────────────── */}
                         <div id="course" className="space-y-8">
 
+                            {signupReferralLocked && referralJoinActivityLuckyDraw ? (
+                                <Reveal>
+                                    <article
+                                        id="mothers-day-lottery"
+                                        className="rounded-3xl bg-black border border-[#5c1313]/55 shadow-xl shadow-black/40 overflow-hidden"
+                                    >
+                                        <div className="p-5 sm:p-6 pb-0">
+                                            <div className="inline-flex items-center gap-2 rounded-full bg-[#4a0e0e]/90 border border-[#7f1d1d]/80 px-3 py-1 text-xs font-semibold text-white mb-4">
+                                                母親節限定｜抽獎活動
+                                            </div>
+                                            <div className="rounded-2xl overflow-hidden border border-[#5c1313]/50 bg-[#0a0a0a]">
+                                                <img
+                                                    src="/mother.png"
+                                                    alt="母親節抽獎活動海報"
+                                                    className="w-full h-auto block"
+                                                    loading="lazy"
+                                                    decoding="async"
+                                                />
+                                            </div>
+                                        </div>
+                                        <form onSubmit={handleLuckyDrawSubmit} className="p-5 sm:p-6 pt-6 flex flex-col gap-5 border-t border-[#d4af37]/25">
+                                            <div>
+                                                <p className="text-sm font-bold text-white mb-1 tracking-tight">抽獎登記</p>
+                                                <p className="text-xs text-zinc-400 leading-relaxed">
+                                                    下列送出僅適用<strong className="text-zinc-200">本區抽獎</strong>，
+                                                    <strong className="text-zinc-200">不會替你送出底下的課程報名表</strong>；須報名課請另填右側表單。
+                                                    <span className="block mt-2 text-[#fde68a]/95">
+                                                        每人<strong className="text-white">限登記乙次</strong>；
+                                                        若<strong className="text-white">手機或 Email（不比對大小寫）任一項</strong>已被使用過，
+                                                        將無法再登記（<strong className="text-white">不分推薦連結／推薦碼</strong>）。
+                                                    </span>
+                                                </p>
+                                            </div>
+
+                                            {!luckyDrawDiscountCode ? (
+                                                <div className="flex flex-col gap-4">
+                                                    <div>
+                                                        <label className="block text-sm font-semibold text-zinc-200 mb-1.5">抽獎聯絡姓名 <span className="text-[#ff4d6d]">*</span></label>
+                                                        <input
+                                                            type="text"
+                                                            value={luckyDrawName}
+                                                            onChange={(e) => setLuckyDrawName(e.target.value)}
+                                                            autoComplete="name"
+                                                            placeholder="請輸入姓名"
+                                                            className="w-full px-4 py-3 rounded-xl bg-[#121212] border border-[#5c1313]/45 text-white placeholder-zinc-600 focus:border-[#ff4d6d]/55 focus:ring-2 focus:ring-[#ff4d6d]/15 outline-none text-sm transition-colors"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-semibold text-zinc-200 mb-1.5">Email <span className="text-[#ff4d6d]">*</span></label>
+                                                        <input
+                                                            type="email"
+                                                            value={luckyDrawEmail}
+                                                            onChange={(e) => setLuckyDrawEmail(e.target.value)}
+                                                            autoComplete="email"
+                                                            placeholder="name@example.com"
+                                                            className="w-full px-4 py-3 rounded-xl bg-[#121212] border border-[#5c1313]/45 text-white placeholder-zinc-600 focus:border-[#ff4d6d]/55 focus:ring-2 focus:ring-[#ff4d6d]/15 outline-none text-sm transition-colors"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-sm font-semibold text-zinc-200 mb-1.5">手機號碼 <span className="text-[#ff4d6d]">*</span></label>
+                                                        <input
+                                                            type="tel"
+                                                            inputMode="numeric"
+                                                            autoComplete="tel"
+                                                            value={luckyDrawPhone}
+                                                            onChange={handleLuckyDrawPhoneChange}
+                                                            placeholder="0912345678（僅 10 碼數字）"
+                                                            className="w-full px-4 py-3 rounded-xl bg-[#121212] border border-[#5c1313]/45 text-white placeholder-zinc-600 focus:border-[#ff4d6d]/55 focus:ring-2 focus:ring-[#ff4d6d]/15 outline-none text-sm transition-colors"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                            {luckyDrawFeedback.text ? (
+                                                <div
+                                                    role="alert"
+                                                    className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                                                        luckyDrawFeedback.tone === 'ok'
+                                                            ? 'bg-emerald-950/40 border border-emerald-500/35 text-emerald-100'
+                                                            : luckyDrawFeedback.tone === 'info'
+                                                              ? 'bg-amber-950/35 border border-[#d4af37]/40 text-amber-100'
+                                                              : luckyDrawFeedback.tone === 'err'
+                                                                ? 'bg-[#4a0e0e]/35 border border-[#ff4d6d]/35 text-rose-100'
+                                                                : 'border border-zinc-700 text-zinc-300'
+                                                    }`}
+                                                >
+                                                    {luckyDrawFeedback.text}
+                                                </div>
+                                            ) : null}
+                                            {luckyDrawDiscountCode ? (
+                                                <div className="rounded-2xl border border-[#d4af37]/55 bg-[#422006]/25 px-4 py-4 flex flex-col gap-3">
+                                                    <p className="text-xs font-bold text-[#fde047] tracking-wider">
+                                                        {luckyDrawAlreadyRegistered ? '您的登記折扣碼' : '您的專屬折扣碼'}
+                                                    </p>
+                                                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                                                        <p className="flex-1 font-mono text-2xl sm:text-[1.65rem] font-black tracking-[0.2em] text-white text-center sm:text-left break-all">
+                                                            {luckyDrawDiscountCode}
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={async () => {
+                                                                try {
+                                                                    await navigator.clipboard.writeText(luckyDrawDiscountCode);
+                                                                    setLuckyDrawCodeCopied(true);
+                                                                    window.setTimeout(() => setLuckyDrawCodeCopied(false), 2200);
+                                                                } catch {
+                                                                    setLuckyDrawCodeCopied(false);
+                                                                }
+                                                            }}
+                                                            className="shrink-0 rounded-xl border border-[#ff4d6d]/45 bg-[#ff4d6d]/15 hover:bg-[#ff4d6d]/25 text-[#fda4af] font-bold text-sm px-5 py-3 transition-colors"
+                                                        >
+                                                            {luckyDrawCodeCopied ? '已複製' : '複製折扣碼'}
+                                                        </button>
+                                                    </div>
+                                                    {luckyDrawDiscountExpiresAt ? (
+                                                        <p className="text-xs text-[#fde68a]/95 leading-relaxed">
+                                                            <span className="font-semibold text-white">使用期限：</span>
+                                                            {formatLuckyDrawExpiryZh(luckyDrawDiscountExpiresAt)} 前（登記日起算 30 日內須使用）
+                                                        </p>
+                                                    ) : null}
+                                                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                                        {luckyDrawAlreadyRegistered
+                                                            ? '此為您先前登記所核發之折扣碼。如需確認信可點選下方重寄。'
+                                                            : '請保存此碼；確認信已寄至您登記的 Email。'}
+                                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        disabled={luckyDrawResendBusy || !luckyDrawContactLocked}
+                                                        onClick={handleLuckyDrawResendEmail}
+                                                        className="w-full rounded-xl border border-[#d4af37]/50 bg-[#422006]/40 hover:bg-[#422006]/60 text-[#fde047] font-bold text-sm py-3 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+                                                    >
+                                                        {luckyDrawResendBusy ? '寄送中…' : '重新寄送確認信至 Email'}
+                                                    </button>
+                                                </div>
+                                            ) : null}
+                                            <button
+                                                type="submit"
+                                                disabled={luckyDrawSubmitting || !!luckyDrawDiscountCode}
+                                                className="w-full rounded-2xl bg-gradient-to-r from-[#7f1d1d] to-[#991b1b] hover:from-[#991b1b] hover:to-[#b91c1c] border border-[#5c1313]/80 text-white font-black text-base py-3.5 shadow-lg shadow-[#450a0a]/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                {luckyDrawSubmitting ? '送出中…' : luckyDrawDiscountCode ? '已完成登記' : '登記抽獎'}
+                                            </button>
+                                        </form>
+                                    </article>
+                                </Reveal>
+                            ) : null}
+
                             {/* Course intro */}
                             <Reveal>
                                 <article className="rounded-3xl bg-zinc-900 border border-zinc-800 p-7">
@@ -701,6 +1140,51 @@ const Signup = () => {
 
                                     <form onSubmit={handleSubmit} className="p-5 sm:p-6 flex flex-col gap-5">
 
+                                        {/* 母親節抽獎折扣碼（正課折抵；套用後鎖定複訓並帶入聯絡資料） */}
+                                        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4">
+                                            <label className="block text-sm font-bold text-emerald-300 mb-2">母親節活動折扣碼（選填）</label>
+                                            <p className="text-xs text-zinc-500 mb-3 leading-relaxed">
+                                                若您已完成母親節抽獎登記並取得折扣碼，請輸入後按「套用」。將折抵正課費用並自動帶入姓名／手機／Email；<strong className="text-zinc-400">限正課</strong>，複訓將無法選取。
+                                            </p>
+                                            <div className="flex flex-col sm:flex-row gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={courseDiscountInput}
+                                                    onChange={(e) => setCourseDiscountInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                                                    placeholder="8 碼英數字"
+                                                    autoComplete="off"
+                                                    className="flex-1 px-4 py-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white placeholder-zinc-600 font-mono tracking-wider focus:border-emerald-500/50 outline-none text-sm"
+                                                />
+                                                <div className="flex gap-2 shrink-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleApplyCourseDiscount}
+                                                        disabled={courseDiscountLoading}
+                                                        className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-3 text-sm disabled:opacity-50"
+                                                    >
+                                                        {courseDiscountLoading ? '驗證中…' : '套用'}
+                                                    </button>
+                                                    {courseDiscountVerified ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { clearCourseDiscount(); setCourseDiscountInput(''); }}
+                                                            className="rounded-xl border border-zinc-600 text-zinc-300 font-semibold px-4 py-3 text-sm hover:bg-zinc-800"
+                                                        >
+                                                            移除
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            {courseDiscountError ? (
+                                                <p className="mt-2 text-xs text-rose-400">{courseDiscountError}</p>
+                                            ) : null}
+                                            {courseDiscountVerified ? (
+                                                <p className="mt-2 text-xs text-emerald-400/90">
+                                                    已套用：正課折抵 {courseDiscountAmountNtd.toLocaleString()} 元（場次列表已顯示折後價）。
+                                                </p>
+                                            ) : null}
+                                        </div>
+
                                         {/* Session Selection */}
                                         <div>
                                             <label className="block text-sm font-semibold text-zinc-300 mb-3">選擇場次 <span className="text-rose-400">*</span></label>
@@ -736,8 +1220,13 @@ const Signup = () => {
                                                                         <span>{session.location}<br /><span className="text-zinc-600">{session.address}</span></span>
                                                                     </div>
                                                                     <div className="flex justify-between items-end">
-                                                                        <div className="flex items-baseline gap-2">
-                                                                            <span className="text-xl font-black text-sky-400">${session.price?.toLocaleString()}</span>
+                                                                        <div className="flex items-baseline gap-2 flex-wrap">
+                                                                            <span className={`text-xl font-black ${courseDiscountVerified ? 'text-emerald-400' : 'text-sky-400'}`}>
+                                                                                ${computeMainPriceAfterDiscount(session.price).toLocaleString()}
+                                                                            </span>
+                                                                            {courseDiscountVerified && (
+                                                                                <span className="text-sm text-zinc-500 line-through">${Number(session.price || 0).toLocaleString()}</span>
+                                                                            )}
                                                                             {!!session.originalPrice && <span className="text-xs text-zinc-600 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>}
                                                                         </div>
                                                                         <div className="text-xs text-zinc-600">{isFull ? <span className="text-amber-400">已額滿，報名排備取</span> : `正課名額：剩 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`}</div>
@@ -778,14 +1267,17 @@ const Signup = () => {
                                             <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
                                                 <p className="text-sm font-bold text-zinc-300 mb-3">報名類型 <span className="text-rose-400">*</span></p>
                                                 <div className="flex flex-col gap-2">
-                                                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 has-[:checked]:border-sky-500/50 has-[:checked]:bg-sky-500/5 transition-colors">
+                                                    <label className={`flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 has-[:checked]:border-sky-500/50 has-[:checked]:bg-sky-500/5 transition-colors ${courseDiscountVerified ? 'ring-1 ring-emerald-500/30' : ''}`}>
                                                         <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" checked={formData.registrationKind === 'main'} onChange={() => setFormData(prev => ({ ...prev, registrationKind: 'main' }))} />
                                                         <span><span className="block font-bold text-white text-sm">正課</span><span className="block text-xs text-zinc-500 mt-0.5">匯款報名，依本場次公告金額繳交。</span></span>
                                                     </label>
-                                                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 has-[:checked]:border-emerald-500/50 has-[:checked]:bg-emerald-500/5 transition-colors">
-                                                        <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" checked={formData.registrationKind === 'refresher'} onChange={() => setFormData((prev) => ({ ...prev, registrationKind: 'refresher', invoiceType: 'general', taxId: '' }))} />
+                                                    <label className={`flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-3 transition-colors ${courseDiscountVerified ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'cursor-pointer has-[:checked]:border-emerald-500/50 has-[:checked]:bg-emerald-500/5'}`}>
+                                                        <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" disabled={courseDiscountVerified} checked={formData.registrationKind === 'refresher'} onChange={() => setFormData((prev) => ({ ...prev, registrationKind: 'refresher', invoiceType: 'general', taxId: '' }))} />
                                                         <span><span className="block font-bold text-white text-sm">複訓</span><span className="block text-xs text-zinc-500 mt-0.5">費用 {REFRESHER_FEE} 元、當天現場繳交。本場次可收 {selectedRefresherMax} 人。</span></span>
                                                     </label>
+                                                    {courseDiscountVerified ? (
+                                                        <p className="text-xs text-amber-400/90">已套用母親節折扣，僅能選擇正課。</p>
+                                                    ) : null}
                                                 </div>
                                                 {formData.registrationKind === 'refresher' && (
                                                     <div className="mt-4">

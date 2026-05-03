@@ -1,0 +1,29 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "vibe_activity_lucky_draw_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaign", "order": "ASCENDING" },
+        { "fieldPath": "phone", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vibe_activity_lucky_draw_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaign", "order": "ASCENDING" },
+        { "fieldPath": "emailNormalized", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "vibe_activity_lucky_draw_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaign", "order": "ASCENDING" },
+        { "fieldPath": "discountCode", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

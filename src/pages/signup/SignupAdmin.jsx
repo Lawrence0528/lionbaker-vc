@@ -13,6 +13,9 @@ import {
     resolvePosterSrc,
     SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
     VIBE_REFERRAL_CODES_COLLECTION,
+    VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW,
+    VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COLLECTION,
+    VIBE_ACTIVITY_LUCKY_DRAW_CAMPAIGN_MOTHERS_DAY_2026,
 } from './signupLandingShared';
 
 const ADMIN_EMAIL = 'charge0528@gmail.com';
@@ -47,6 +50,7 @@ function mapReferralSnapshotToRows(snap) {
             code: x.id,
             referrerName: String(data.referrerName || ''),
             upperReferrerName: String(data.upperReferrerName || ''),
+            joinActivityLuckyDraw: Boolean(data[VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW]),
             createdAt: data.createdAt,
             updatedAt: data.updatedAt,
         };
@@ -66,6 +70,16 @@ function mapReferralSnapshotToRows(snap) {
 function buildReferralPublicUrl(code) {
     const c = String(code || '').trim();
     return `${PUBLIC_SIGNUP_CHECKIN_ORIGIN}${REFERRAL_SIGNUP_PUBLIC_PATH}?ref=${encodeURIComponent(c)}`;
+}
+
+/** Firestore Timestamp / 其他 → 後台列表顯示用 */
+function formatAdminFirestoreDateTime(v) {
+    if (!v || typeof v.toDate !== 'function') return '—';
+    try {
+        return v.toDate().toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+        return '—';
+    }
 }
 
 const REFRESHER_FEE = 500;
@@ -159,12 +173,16 @@ const SignupAdmin = () => {
 
     const [adminEmail, setAdminEmail] = useState(null);
     const isAdmin = !!adminEmail || isMockMode;
-    const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations', 'landing'
+    const [viewMode, setViewMode] = useState('sessions'); // 'sessions', 'registrations', 'landing', 'mothers_day_lottery'
     const [sessions, setSessions] = useState([]);
     const [registrations, setRegistrations] = useState([]);
     const [selectedSession, setSelectedSession] = useState(null);
     /** 報名名單：正課 main / 複訓 refresher（僅有場次之場次） */
     const [registrationListTab, setRegistrationListTab] = useState('main');
+    /** 母親節抽獎：子頁籤＝開啟「參加活動抽獎」之推薦人姓名（同一姓名可對應多個網址代碼） */
+    const [mothersDaySubTab, setMothersDaySubTab] = useState('');
+    const [luckyDrawEntries, setLuckyDrawEntries] = useState([]);
+    const [luckyDrawLoading, setLuckyDrawLoading] = useState(false);
 
     // UI State
     const [loading, setLoading] = useState(true);
@@ -234,11 +252,78 @@ const SignupAdmin = () => {
 
     /** 報名頁推薦連結 CRUD：`vibe_referral_codes` */
     const [referralCrudMode, setReferralCrudMode] = useState(null); // null | 'create' | 'edit'
-    const [referralForm, setReferralForm] = useState({ code: '', referrerName: '', upperReferrerName: '' });
+    const [referralForm, setReferralForm] = useState({
+        code: '',
+        referrerName: '',
+        upperReferrerName: '',
+        joinActivityLuckyDraw: false,
+    });
     const [referralList, setReferralList] = useState([]);
     const [referralListLoading, setReferralListLoading] = useState(false);
     const [referralOpMsg, setReferralOpMsg] = useState('');
     const [referralSaving, setReferralSaving] = useState(false);
+
+    /** 已勾選「參加活動抽獎」的推薦連結 → 依推薦人姓名分組的網址代碼列表 */
+    const mothersDayCodesByReferrerName = useMemo(() => {
+        const map = new Map();
+        for (const r of referralList) {
+            if (!r.joinActivityLuckyDraw) continue;
+            const displayName = String(r.referrerName || '').trim() || '（未設定推薦人姓名）';
+            if (!map.has(displayName)) map.set(displayName, []);
+            map.get(displayName).push(String(r.code || '').trim());
+        }
+        for (const arr of map.values()) arr.sort((a, b) => String(a).localeCompare(String(b), 'en'));
+        return map;
+    }, [referralList]);
+
+    const mothersDayActivityReferrerNames = useMemo(
+        () => [...mothersDayCodesByReferrerName.keys()].sort((a, b) => a.localeCompare(b, 'zh-Hant')),
+        [mothersDayCodesByReferrerName]
+    );
+
+    const reloadLuckyDrawEntries = useCallback(async () => {
+        if (isMockMode) {
+            setLuckyDrawEntries([]);
+            return;
+        }
+        setLuckyDrawLoading(true);
+        try {
+            const qLot = query(
+                collection(db, VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COLLECTION),
+                orderBy('createdAt', 'desc')
+            );
+            const snap = await getDocs(qLot);
+            setLuckyDrawEntries(snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) })));
+        } catch (e) {
+            console.error(e);
+            setLuckyDrawEntries([]);
+        } finally {
+            setLuckyDrawLoading(false);
+        }
+    }, [isMockMode]);
+
+    /** 無效子頁籤時改選第一位推薦人 */
+    useEffect(() => {
+        if (viewMode !== 'mothers_day_lottery') return;
+        if (mothersDayActivityReferrerNames.length === 0) {
+            setMothersDaySubTab('');
+            return;
+        }
+        setMothersDaySubTab((prev) =>
+            prev && mothersDayActivityReferrerNames.includes(prev) ? prev : mothersDayActivityReferrerNames[0]
+        );
+    }, [viewMode, mothersDayActivityReferrerNames]);
+
+    const filteredMothersDayLuckyEntries = useMemo(() => {
+        const codesRaw = mothersDayCodesByReferrerName.get(mothersDaySubTab) || [];
+        const codeSet = new Set(codesRaw.filter(Boolean));
+        return luckyDrawEntries.filter(
+            (row) =>
+                row.campaign === VIBE_ACTIVITY_LUCKY_DRAW_CAMPAIGN_MOTHERS_DAY_2026 &&
+                typeof row.referralCode === 'string' &&
+                codeSet.has(row.referralCode)
+        );
+    }, [luckyDrawEntries, mothersDayCodesByReferrerName, mothersDaySubTab]);
 
     useEffect(() => {
         if (isMockMode) {
@@ -387,6 +472,14 @@ const SignupAdmin = () => {
         reloadReferralList();
     }, [adminEmail, viewMode, isMockMode, reloadReferralList]);
 
+    /** 進入「母親節抽獎」時載入推薦列表（含「參加活動」）與抽獎登記 */
+    useEffect(() => {
+        if (!adminEmail || viewMode !== 'mothers_day_lottery') return;
+        if (isMockMode) return;
+        reloadReferralList();
+        reloadLuckyDrawEntries();
+    }, [adminEmail, viewMode, isMockMode, reloadReferralList, reloadLuckyDrawEntries]);
+
     const handleLandingSave = async () => {
         if (!landingDraft) return;
         setLandingMsg('');
@@ -425,6 +518,7 @@ const SignupAdmin = () => {
             code: randomSignupRefCode8(),
             referrerName: '',
             upperReferrerName: '',
+            joinActivityLuckyDraw: false,
         });
         setReferralOpMsg('');
     };
@@ -435,13 +529,14 @@ const SignupAdmin = () => {
             code: r.code,
             referrerName: r.referrerName,
             upperReferrerName: r.upperReferrerName,
+            joinActivityLuckyDraw: Boolean(r.joinActivityLuckyDraw),
         });
         setReferralOpMsg('');
     };
 
     const cancelReferralCrud = () => {
         setReferralCrudMode(null);
-        setReferralForm({ code: '', referrerName: '', upperReferrerName: '' });
+        setReferralForm({ code: '', referrerName: '', upperReferrerName: '', joinActivityLuckyDraw: false });
         setReferralOpMsg('');
     };
 
@@ -514,6 +609,7 @@ const SignupAdmin = () => {
             const payload = {
                 referrerName,
                 upperReferrerName,
+                [VIBE_REFERRAL_JOIN_ACTIVITY_LUCKY_DRAW]: Boolean(referralForm.joinActivityLuckyDraw),
                 updatedAt: serverTimestamp(),
             };
             if (!existed.exists()) {
@@ -522,7 +618,7 @@ const SignupAdmin = () => {
             await setDoc(refDoc, payload, { merge: true });
             await reloadReferralList();
             setReferralCrudMode(null);
-            setReferralForm({ code: '', referrerName: '', upperReferrerName: '' });
+            setReferralForm({ code: '', referrerName: '', upperReferrerName: '', joinActivityLuckyDraw: false });
             setReferralOpMsg(wasCreate ? `已建立。推薦網址：${buildReferralPublicUrl(code)}` : `已更新「${code}」。`);
         } catch (e) {
             setReferralOpMsg(`儲存失敗：${e.message || e}`);
@@ -1703,7 +1799,13 @@ const SignupAdmin = () => {
                                 </button>
                             )}
                             AI落地師培訓班{' '}
-                            {viewMode === 'sessions' ? '場次管理' : viewMode === 'landing' ? '報名頁設定' : '報名名單管理'}
+                            {viewMode === 'sessions'
+                                ? '場次管理'
+                                : viewMode === 'landing'
+                                  ? '報名頁設定'
+                                  : viewMode === 'mothers_day_lottery'
+                                    ? '母親節抽獎'
+                                    : '報名名單管理'}
                         </h1>
                         {adminEmail && (
                             <p className="text-slate-500 text-sm mt-1 flex items-center gap-2">
@@ -1732,6 +1834,16 @@ const SignupAdmin = () => {
                                     className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${viewMode === 'landing' ? 'bg-blue-600 text-white shadow' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
                                 >
                                     報名頁設定
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setViewMode('mothers_day_lottery');
+                                        setLandingMsg('');
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${viewMode === 'mothers_day_lottery' ? 'bg-rose-600 text-white shadow' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'}`}
+                                >
+                                    母親節抽獎
                                 </button>
                             </nav>
                         )}
@@ -1896,7 +2008,7 @@ const SignupAdmin = () => {
                                                         <code className="bg-white/80 px-1 rounded border border-emerald-100 text-[11px]">{VIBE_REFERRAL_CODES_COLLECTION}</code>
                                                         ：每個 8 碼為一筆資料（可多筆並存）。
                                                         學員開啟 <code className="bg-white/80 px-1 rounded border border-emerald-100 text-[11px]">?ref=</code>{' '}
-                                                        會自動依該筆帶入「來源」並隱藏手選。
+                                                        會自動依該筆帶入「來源」並隱藏手選。「參加活動抽獎」勾選時，經該連結進入者才看得到報名頁上的抽獎活動區。
                                                     </p>
                                                 </div>
                                                 <button
@@ -1965,6 +2077,23 @@ const SignupAdmin = () => {
                                                                 />
                                                             </label>
                                                         </div>
+                                                        <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={referralForm.joinActivityLuckyDraw}
+                                                                onChange={(e) =>
+                                                                    setReferralForm((prev) => ({
+                                                                        ...prev,
+                                                                        joinActivityLuckyDraw: e.target.checked,
+                                                                    }))
+                                                                }
+                                                                className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                                            />
+                                                            <span className="text-xs text-slate-700 leading-relaxed">
+                                                                <span className="font-bold text-slate-800 block mb-0.5">參加活動抽獎</span>
+                                                                勾選後，只有從此推薦網址進入的使用者會在報名頁看到活動區（例如母親節抽獎登記）。
+                                                            </span>
+                                                        </label>
                                                         <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center sm:justify-between">
                                                             <code
                                                                 className="text-[11px] bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg break-all text-slate-700"
@@ -2048,6 +2177,9 @@ const SignupAdmin = () => {
                                                                     <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 hidden sm:table-cell">
                                                                         上層
                                                                     </th>
+                                                                    <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 whitespace-nowrap hidden md:table-cell">
+                                                                        活動抽獎
+                                                                    </th>
                                                                     <th scope="col" className="px-3 py-2.5 font-bold text-slate-600 min-w-[180px]">
                                                                         連結預覽
                                                                     </th>
@@ -2067,6 +2199,13 @@ const SignupAdmin = () => {
                                                                             <td className="px-3 py-2.5 align-top text-slate-800">{r.referrerName || '—'}</td>
                                                                             <td className="px-3 py-2.5 align-top text-slate-600 hidden sm:table-cell">
                                                                                 {r.upperReferrerName || '—'}
+                                                                            </td>
+                                                                            <td className="px-3 py-2.5 align-top hidden md:table-cell whitespace-nowrap">
+                                                                                <span
+                                                                                    className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${r.joinActivityLuckyDraw ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white text-slate-500'}`}
+                                                                                >
+                                                                                    {r.joinActivityLuckyDraw ? '是' : '否'}
+                                                                                </span>
                                                                             </td>
                                                                             <td className="px-3 py-2.5 align-top">
                                                                                 <span className="text-xs text-slate-500 max-w-[14rem] sm:max-w-xs inline-block truncate" title={url}>
@@ -2130,6 +2269,133 @@ const SignupAdmin = () => {
                                             ) : null}
                                         </div>
                                     </div>
+                                )}
+                            </section>
+                        )}
+
+                        {viewMode === 'mothers_day_lottery' && (
+                            <section className="bg-white rounded-xl shadow-md border border-slate-200 p-6 md:p-8 mb-8" aria-labelledby="mothers-day-lottery-heading">
+                                <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
+                                    <div>
+                                        <h2 id="mothers-day-lottery-heading" className="text-lg font-bold text-slate-800">
+                                            母親節抽獎登記名單
+                                        </h2>
+                                        <p className="text-xs text-slate-500 mt-1 leading-relaxed max-w-3xl">
+                                            資料來源 Firestore{' '}
+                                            <code className="bg-slate-100 px-1 rounded text-[11px]">{VIBE_ACTIVITY_LUCKY_DRAW_ENTRIES_COLLECTION}</code>
+                                            ；下方子頁籤僅列出「報名頁設定」→ 推薦連結中<strong>已勾選參加活動抽獎</strong>
+                                            的推薦人姓名，並以該員名下所有<strong>網址代碼</strong>過濾登記（同一推薦人可擁有多組代碼）。
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        disabled={isMockMode || referralListLoading || luckyDrawLoading}
+                                        onClick={() => {
+                                            reloadReferralList();
+                                            reloadLuckyDrawEntries();
+                                        }}
+                                        className="shrink-0 border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50"
+                                    >
+                                        {referralListLoading || luckyDrawLoading ? '載入中…' : '重新整理'}
+                                    </button>
+                                </header>
+
+                                {isMockMode ? (
+                                    <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+                                        本地 mock 模式無法讀取抽獎集合，請以正式環境登入後查看。
+                                    </p>
+                                ) : mothersDayActivityReferrerNames.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+                                        尚無「已勾選參加活動抽獎」的推薦連結。請至<strong>報名頁設定</strong>
+                                        區塊編輯推薦連結並勾選<strong>參加活動抽獎</strong>後，此處會出現可篩選的推薦人頁籤。
+                                    </div>
+                                ) : (
+                                    <>
+                                        <nav className="flex flex-wrap gap-2 mb-6" aria-label="依推薦人篩選抽獎登記">
+                                            {mothersDayActivityReferrerNames.map((nm) => {
+                                                const nCodes = (mothersDayCodesByReferrerName.get(nm) || []).length;
+                                                const selected = mothersDaySubTab === nm;
+                                                return (
+                                                    <button
+                                                        key={nm}
+                                                        type="button"
+                                                        onClick={() => setMothersDaySubTab(nm)}
+                                                        className={`rounded-xl border px-4 py-2 text-sm font-bold transition-colors max-w-full break-words text-left ${
+                                                            selected
+                                                                ? 'border-rose-400 bg-rose-50 text-rose-900 shadow-sm'
+                                                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                                                        }`}
+                                                    >
+                                                        <span className="block">{nm}</span>
+                                                        <span className="block text-[11px] font-normal opacity-80 mt-0.5">
+                                                            {nCodes} 組活動代碼
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </nav>
+
+                                        {referralListLoading && luckyDrawEntries.length === 0 ? (
+                                            <div className="flex justify-center py-16">
+                                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-rose-500" />
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto rounded-xl border border-slate-100">
+                                                <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center text-xs text-slate-600">
+                                                    <span>
+                                                        本頁籤符合筆數：<strong className="text-slate-900">{filteredMothersDayLuckyEntries.length}</strong>
+                                                    </span>
+                                                    <span className="font-mono">
+                                                        活動代碼：{(mothersDayCodesByReferrerName.get(mothersDaySubTab) || []).join(', ') || '—'}
+                                                    </span>
+                                                </div>
+                                                <table className="min-w-full text-sm text-left border-collapse">
+                                                    <thead>
+                                                        <tr className="border-b border-slate-100 bg-white">
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 whitespace-nowrap">登記時間</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600">姓名</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 min-w-[140px]">Email</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 whitespace-nowrap">手機</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 whitespace-nowrap">網址代碼</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 hidden lg:table-cell">登記時推薦人快照</th>
+                                                            <th className="px-3 py-2.5 font-bold text-slate-600 hidden xl:table-cell max-w-[12rem]">獎項摘要</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {filteredMothersDayLuckyEntries.length === 0 ? (
+                                                            <tr>
+                                                                <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                                                                    尚無透過以上活動代碼送出的抽獎登記。
+                                                                </td>
+                                                            </tr>
+                                                        ) : (
+                                                            filteredMothersDayLuckyEntries.map((row) => (
+                                                                <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/90">
+                                                                    <td className="px-3 py-2.5 align-top text-slate-700 whitespace-nowrap text-xs">
+                                                                        {formatAdminFirestoreDateTime(row.createdAt)}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 align-top font-medium text-slate-900">
+                                                                        {row.name || '—'}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 align-top text-slate-700 break-all text-xs">{row.email || '—'}</td>
+                                                                    <td className="px-3 py-2.5 align-top font-mono text-xs text-slate-800">{row.phone || '—'}</td>
+                                                                    <td className="px-3 py-2.5 align-top font-mono text-xs font-bold text-rose-800">
+                                                                        {row.referralCode || '—'}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 align-top text-xs text-slate-600 hidden lg:table-cell">
+                                                                        {row.referrerSnapshot || '—'}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 align-top text-xs text-slate-600 hidden xl:table-cell max-w-[12rem] break-words">
+                                                                        {row.prizeSummary || '—'}
+                                                                    </td>
+                                                                </tr>
+                                                            ))
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </section>
                         )}

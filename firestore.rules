@@ -77,6 +77,20 @@ service cloud.firestore {
         && request.auth.token.email == 'charge0528@gmail.com';
     }
 
+    // 報名頁活動抽獎：與培訓報名分開送出；後台列表僅指定管理員可讀
+    match /vibe_activity_lucky_draw_entries/{entryId} {
+      allow get: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+      allow list: if request.auth != null
+        && request.auth.token.email == 'charge0528@gmail.com';
+      allow create: if false;
+      allow update, delete: if false;
+    }
+
+    match /vibe_activity_lucky_draw_dedupe/{docId} {
+      allow read, write: if false;
+    }
+
     // 其餘集合僅允許 Admin SDK（Cloud Functions 等）存取
     match /{document=**} {
       allow read, write: if false;
