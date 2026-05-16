@@ -60,6 +60,23 @@ function toIso(value) {
     }
 }
 
+function normalizeHtmlDocument(html) {
+    const rawHtml = String(html || "");
+    if (!rawHtml.trim()) return rawHtml;
+
+    const doctypeMatch = /<!doctype\s+html\b[^>]*>/i.exec(rawHtml);
+    const htmlMatch = /<html\b[^>]*>/i.exec(rawHtml);
+    const startMatch = doctypeMatch || htmlMatch;
+    const endMatches = Array.from(rawHtml.matchAll(/<\/html\s*>/gi));
+    const endMatch = endMatches[endMatches.length - 1];
+
+    if (!startMatch || !endMatch || endMatch.index < startMatch.index) {
+        return rawHtml;
+    }
+
+    return rawHtml.slice(startMatch.index, endMatch.index + endMatch[0].length).trim();
+}
+
 // API App
 const apiApp = express();
 apiApp.use(cors({ origin: true }));
@@ -1978,7 +1995,7 @@ exports.renderSandbox = onRequest(async (req, res) => {
         // 瀏覽器短快取；CDN 邊緣較長（同一網址＋同一 ?t= 才命中）。更新內容請改 ?t= 時間戳 bust。
         res.set("Cache-Control", "public, max-age=120, s-maxage=600, stale-while-revalidate=86400");
 
-        let htmlResponse = projectData.htmlCode;
+        let htmlResponse = normalizeHtmlDocument(projectData.htmlCode);
 
         // 移除 AI 產生的舊 meta tag (避免 querySelector 取到錯誤的假資料)
         htmlResponse = htmlResponse.replace(/<meta\s+name=["']x-project-id["'].*?>/gi, '');

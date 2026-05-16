@@ -85,6 +85,35 @@ function formatAdminFirestoreDateTime(v) {
 const REFRESHER_FEE = 500;
 const DEFAULT_REFRESHER_MAX = 10;
 const PAYEE_OPTIONS = ['', '嘉吉', '偉志', '白白'];
+const MOTHERS_DAY_DRAW_TOTAL_DURATION_MS = 3800;
+const MOTHERS_DAY_DRAW_SLOW_START_MS = 2500;
+
+function randomInt(max) {
+    if (!Number.isFinite(max) || max <= 0) return 0;
+    if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+        const buf = new Uint32Array(1);
+        globalThis.crypto.getRandomValues(buf);
+        return buf[0] % max;
+    }
+    return Math.floor(Math.random() * max);
+}
+
+function getLuckyDrawDisplayName(row) {
+    return String(row?.name || '').trim() || '未填姓名';
+}
+
+function maskLuckyDrawName(name) {
+    const raw = String(name || '').trim();
+    if (!raw) return '未填姓名';
+    const chars = Array.from(raw);
+    if (chars.length <= 1) return raw;
+    if (chars.length === 2) return `${chars[0]}O`;
+    return `${chars[0]}O${chars.slice(2).join('')}`;
+}
+
+function getLuckyDrawMaskedDisplayName(row) {
+    return maskLuckyDrawName(getLuckyDrawDisplayName(row));
+}
 
 /** 舊資料僅有合併於 source 時，還原「推薦人／上層」 */
 const splitMergedReferrerSource = (raw) => {
@@ -183,6 +212,12 @@ const SignupAdmin = () => {
     const [mothersDaySubTab, setMothersDaySubTab] = useState('');
     const [luckyDrawEntries, setLuckyDrawEntries] = useState([]);
     const [luckyDrawLoading, setLuckyDrawLoading] = useState(false);
+    const [mothersDayDrawRolling, setMothersDayDrawRolling] = useState(false);
+    const [mothersDayDrawSlotText, setMothersDayDrawSlotText] = useState('按下開始抽獎');
+    const [mothersDayDrawWinner, setMothersDayDrawWinner] = useState(null);
+    const [mothersDayDrawPetals, setMothersDayDrawPetals] = useState([]);
+    const mothersDayDrawTimerRef = useRef(null);
+    const mothersDayDrawPetalTimerRef = useRef(null);
 
     // UI State
     const [loading, setLoading] = useState(true);
@@ -324,6 +359,92 @@ const SignupAdmin = () => {
                 codeSet.has(row.referralCode)
         );
     }, [luckyDrawEntries, mothersDayCodesByReferrerName, mothersDaySubTab]);
+
+    const mothersDayDrawCandidateKey = useMemo(
+        () => filteredMothersDayLuckyEntries.map((row) => row.id).join('|'),
+        [filteredMothersDayLuckyEntries]
+    );
+
+    const clearMothersDayDrawTimers = useCallback(() => {
+        if (mothersDayDrawTimerRef.current) {
+            window.clearTimeout(mothersDayDrawTimerRef.current);
+            mothersDayDrawTimerRef.current = null;
+        }
+        if (mothersDayDrawPetalTimerRef.current) {
+            window.clearTimeout(mothersDayDrawPetalTimerRef.current);
+            mothersDayDrawPetalTimerRef.current = null;
+        }
+    }, []);
+
+    const resetMothersDayDraw = useCallback(() => {
+        clearMothersDayDrawTimers();
+        setMothersDayDrawRolling(false);
+        setMothersDayDrawSlotText('按下開始抽獎');
+        setMothersDayDrawWinner(null);
+        setMothersDayDrawPetals([]);
+    }, [clearMothersDayDrawTimers]);
+
+    const launchMothersDayDrawPetals = useCallback(() => {
+        const colors = ['#f4c0d1', '#ed93b1', '#fbeaf0', '#d4537e', '#f0c8d8'];
+        const petals = Array.from({ length: 24 }, (_, i) => ({
+            id: `${Date.now()}_${i}_${randomInt(100000)}`,
+            background: colors[randomInt(colors.length)],
+            left: `${randomInt(96)}%`,
+            size: 8 + randomInt(9),
+            delay: `${randomInt(80) / 100}s`,
+            duration: `${1.2 + randomInt(150) / 100}s`,
+        }));
+        setMothersDayDrawPetals(petals);
+        if (mothersDayDrawPetalTimerRef.current) window.clearTimeout(mothersDayDrawPetalTimerRef.current);
+        mothersDayDrawPetalTimerRef.current = window.setTimeout(() => {
+            setMothersDayDrawPetals([]);
+            mothersDayDrawPetalTimerRef.current = null;
+        }, 3300);
+    }, []);
+
+    const startMothersDayDraw = useCallback(() => {
+        const candidates = filteredMothersDayLuckyEntries;
+        if (mothersDayDrawRolling || candidates.length === 0) return;
+
+        clearMothersDayDrawTimers();
+        setMothersDayDrawRolling(true);
+        setMothersDayDrawWinner(null);
+        setMothersDayDrawPetals([]);
+
+        let speed = 40;
+        let elapsed = 0;
+
+        const tick = () => {
+            const preview = candidates[randomInt(candidates.length)];
+            setMothersDayDrawSlotText(getLuckyDrawMaskedDisplayName(preview));
+            elapsed += speed;
+
+            if (elapsed >= MOTHERS_DAY_DRAW_TOTAL_DURATION_MS) {
+                const winner = candidates[randomInt(candidates.length)];
+                setMothersDayDrawWinner(winner);
+                setMothersDayDrawSlotText(getLuckyDrawMaskedDisplayName(winner));
+                setMothersDayDrawRolling(false);
+                mothersDayDrawTimerRef.current = null;
+                launchMothersDayDrawPetals();
+                return;
+            }
+
+            if (elapsed > MOTHERS_DAY_DRAW_SLOW_START_MS) {
+                speed = Math.min(speed + 8, 220);
+            }
+            mothersDayDrawTimerRef.current = window.setTimeout(tick, speed);
+        };
+
+        mothersDayDrawTimerRef.current = window.setTimeout(tick, speed);
+    }, [clearMothersDayDrawTimers, filteredMothersDayLuckyEntries, launchMothersDayDrawPetals, mothersDayDrawRolling]);
+
+    useEffect(() => {
+        resetMothersDayDraw();
+    }, [mothersDayDrawCandidateKey, mothersDaySubTab, resetMothersDayDraw]);
+
+    useEffect(() => {
+        return () => clearMothersDayDrawTimers();
+    }, [clearMothersDayDrawTimers]);
 
     useEffect(() => {
         if (isMockMode) {
@@ -2334,6 +2455,93 @@ const SignupAdmin = () => {
                                                 );
                                             })}
                                         </nav>
+
+                                        <style>{`
+                                            @keyframes mothersDayFallPetal {
+                                                0% { transform: translateY(-20px) rotate(0deg); opacity: 0.85; }
+                                                100% { transform: translateY(420px) rotate(360deg); opacity: 0; }
+                                            }
+                                        `}</style>
+                                        <div
+                                            className="relative overflow-hidden rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 via-white to-pink-50 px-4 py-6 md:px-6 md:py-7 mb-6 text-center"
+                                            aria-label="母親節抽獎器"
+                                        >
+                                            {mothersDayDrawPetals.map((p) => (
+                                                <span
+                                                    key={p.id}
+                                                    aria-hidden="true"
+                                                    className="pointer-events-none absolute top-[-12px] rounded-[50%_0_50%_0]"
+                                                    style={{
+                                                        left: p.left,
+                                                        width: `${p.size}px`,
+                                                        height: `${p.size}px`,
+                                                        background: p.background,
+                                                        animation: `mothersDayFallPetal ${p.duration} ${p.delay} ease-in forwards`,
+                                                    }}
+                                                />
+                                            ))}
+                                            <div className="text-xl font-bold tracking-wide text-rose-900">母親節感謝抽獎</div>
+                                            <div className="mt-1 text-xs text-rose-500">
+                                                從目前「{mothersDaySubTab || '未選擇'}」頁籤符合名單中抽出得獎人
+                                            </div>
+
+                                            <div className="mx-auto mt-5 flex h-20 max-w-sm items-center justify-center overflow-hidden rounded-[14px] border-2 border-rose-300 bg-white px-4 shadow-sm">
+                                                <div
+                                                    className={`max-w-full truncate ${
+                                                        mothersDayDrawWinner || mothersDayDrawRolling
+                                                            ? 'text-2xl font-bold text-rose-900'
+                                                            : 'text-sm font-medium text-rose-400'
+                                                    }`}
+                                                    title={mothersDayDrawSlotText}
+                                                >
+                                                    {mothersDayDrawSlotText}
+                                                </div>
+                                            </div>
+
+                                            <div className="mt-3 text-xs text-rose-500">
+                                                本頁籤共 <strong className="text-rose-900">{filteredMothersDayLuckyEntries.length}</strong> 位參與者
+                                            </div>
+
+                                            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    disabled={mothersDayDrawRolling || filteredMothersDayLuckyEntries.length === 0 || luckyDrawLoading}
+                                                    onClick={startMothersDayDraw}
+                                                    className="rounded-full bg-rose-600 px-8 py-3 text-base font-bold tracking-wide text-white shadow-md shadow-rose-200 transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
+                                                >
+                                                    {mothersDayDrawRolling ? '抽獎中…' : mothersDayDrawWinner ? '再次抽獎' : '開始抽獎'}
+                                                </button>
+                                                {mothersDayDrawWinner ? (
+                                                    <button
+                                                        type="button"
+                                                        disabled={mothersDayDrawRolling}
+                                                        onClick={resetMothersDayDraw}
+                                                        className="rounded-full border border-rose-300 bg-white px-5 py-2.5 text-sm font-bold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"
+                                                    >
+                                                        清除結果
+                                                    </button>
+                                                ) : null}
+                                            </div>
+
+                                            {mothersDayDrawWinner ? (
+                                                <div className="mx-auto mt-5 max-w-md rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-4 text-center">
+                                                    <div className="text-center text-xs font-bold text-rose-500">恭喜得獎者</div>
+                                                    <div className="mt-1 text-center text-2xl font-bold text-rose-900">
+                                                        {getLuckyDrawMaskedDisplayName(mothersDayDrawWinner)}
+                                                    </div>
+                                                    <div className="mt-4 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                                                        <div>
+                                                            <span className="font-bold text-slate-500">活動代碼：</span>
+                                                            <span className="font-mono font-bold text-rose-800">{mothersDayDrawWinner.referralCode || '—'}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-bold text-slate-500">登記時間：</span>
+                                                            {formatAdminFirestoreDateTime(mothersDayDrawWinner.createdAt)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
 
                                         {referralListLoading && luckyDrawEntries.length === 0 ? (
                                             <div className="flex justify-center py-16">

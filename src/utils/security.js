@@ -1,3 +1,34 @@
+export const normalizeHtmlDocument = (html) => {
+    const rawHtml = String(html ?? '');
+    if (!rawHtml.trim()) {
+        return { valid: true, html: '', changed: rawHtml !== '' };
+    }
+
+    const doctypeMatch = /<!doctype\s+html\b[^>]*>/i.exec(rawHtml);
+    const htmlMatch = /<html\b[^>]*>/i.exec(rawHtml);
+    const startMatch = doctypeMatch || htmlMatch;
+    const endMatches = Array.from(rawHtml.matchAll(/<\/html\s*>/gi));
+    const endMatch = endMatches[endMatches.length - 1];
+
+    if (!startMatch || !endMatch || endMatch.index < startMatch.index) {
+        return {
+            valid: false,
+            html: rawHtml,
+            changed: false,
+            error: '請先去 Gemini Canvas 複製好完整 HTML 程式碼，再貼上。'
+        };
+    }
+
+    const endIndex = endMatch.index + endMatch[0].length;
+    const cleanedHtml = rawHtml.slice(startMatch.index, endIndex).trim();
+
+    return {
+        valid: true,
+        html: cleanedHtml,
+        changed: cleanedHtml !== rawHtml
+    };
+};
+
 export const validateHtmlCode = (html) => {
     if (!html) {
         return { valid: true };
@@ -38,4 +69,3 @@ export const validateHtmlCode = (html) => {
 
     return { valid: true, hasWarning: false };
 };
-

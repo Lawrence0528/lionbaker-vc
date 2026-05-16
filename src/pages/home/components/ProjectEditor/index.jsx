@@ -3,7 +3,7 @@ import liff from '@line/liff';
 import { db, storage, signIn } from '../../../../firebase';
 import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { validateHtmlCode } from '../../../../utils/security';
+import { normalizeHtmlDocument, validateHtmlCode } from '../../../../utils/security';
 import { copyToClipboard } from '../../../../utils/clipboard';
 import {
     PREMIUM_COLORS,
@@ -58,9 +58,9 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         htmlCode: project.htmlCode || '',
         userAlias: userProfile.alias || '',
         projectAlias: project.projectAlias || '',
-        useLiff: project.useLiff || false,
-        liffId: project.liffId || '',
-        liffFeatures: project.liffFeatures || [],
+        useLiff: false,
+        liffId: '',
+        liffFeatures: [],
         enableDatabase: project.enableDatabase || false,
         enableStorage: project.enableStorage || false,
     });
@@ -259,6 +259,28 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         setTimeout(() => {
             isUpdatingRef.current = false;
         }, 0);
+    };
+
+    const handleHtmlCodeChange = (value) => {
+        setCommonData((prev) => ({ ...prev, htmlCode: value }));
+    };
+
+    const handleHtmlCodePaste = (e) => {
+        const pastedHtml = e.clipboardData?.getData('text') || '';
+        if (!pastedHtml.trim()) return;
+
+        const normalized = normalizeHtmlDocument(pastedHtml);
+        if (!normalized.valid) {
+            e.preventDefault();
+            alert(normalized.error);
+            return;
+        }
+
+        e.preventDefault();
+        handleHtmlCodeChange(normalized.html);
+        if (normalized.changed) {
+            alert('已自動移除 HTML 前後多餘文字，只保留完整程式碼。');
+        }
     };
 
     const handleCommonChange = (e) => setCommonData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -470,7 +492,22 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             }
         }
 
-        const validation = validateHtmlCode(commonData.htmlCode);
+        const normalizedHtml = normalizeHtmlDocument(commonData.htmlCode);
+        if (!normalizedHtml.valid) {
+            alert(normalizedHtml.error);
+            return;
+        }
+
+        const dataToSave = {
+            ...commonData,
+            htmlCode: normalizedHtml.html,
+        };
+
+        if (normalizedHtml.changed) {
+            setCommonData(dataToSave);
+        }
+
+        const validation = validateHtmlCode(dataToSave.htmlCode);
         if (!validation.valid) {
             alert(`安全性攔截：${validation.error}`);
             return;
@@ -483,15 +520,15 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
         try {
             setStatusMsg('正在儲存...');
             const docData = {
-                ...commonData,
+                ...dataToSave,
                 type: projectType,
-                enableDatabase: projectType === 'form' ? true : commonData.enableDatabase,
-                enableStorage: projectType === 'form' ? true : commonData.enableStorage,
+                enableDatabase: projectType === 'form' ? true : dataToSave.enableDatabase,
+                enableStorage: projectType === 'form' ? true : dataToSave.enableStorage,
                 imageUrls: uploadedImages.map((img) => img.url),
                 updatedAt: serverTimestamp(),
                 thumbnail: uploadedImages.length > 0 ? uploadedImages[0].url : null,
-                userAlias: commonData.userAlias || '',
-                projectAlias: commonData.projectAlias || '',
+                userAlias: dataToSave.userAlias || '',
+                projectAlias: dataToSave.projectAlias || '',
             };
             if (projectType === 'namecard') Object.assign(docData, cardData, { templateKey });
             else if (projectType === 'game') Object.assign(docData, gameData);
@@ -500,18 +537,18 @@ const ProjectEditor = ({ project, onSave, onBack, userProfile }) => {
             else if (projectType === 'form') Object.assign(docData, formData);
 
             // htmlCode 歷程紀錄：若本次內容與原始專案不同且不為空，則追加一筆歷程
-            if (project.htmlCode !== commonData.htmlCode && commonData.htmlCode?.trim()) {
+            if (project.htmlCode !== dataToSave.htmlCode && dataToSave.htmlCode?.trim()) {
                 const prevHistory = project.htmlHistory || {};
                 const timestampKey = new Date().toISOString();
                 docData.htmlHistory = {
                     ...prevHistory,
-                    [timestampKey]: commonData.htmlCode,
+                    [timestampKey]: dataToSave.htmlCode,
                 };
             }
 
             await updateDoc(doc(db, 'projects', project.id), docData);
 
-            if (commonData.htmlCode?.trim()) {
+            if (dataToSave.htmlCode?.trim()) {
                 sendLineNotification();
             }
 
@@ -756,41 +793,6 @@ ${baseInfo}
                                 </div>
                             </div>
 
-                            {/* 電子名片專案不顯示 LIFF 整合選項 */}
-                            {projectType !== 'namecard' && (
-                                <>
-                                    <hr className="border-slate-100 my-2" />
-                                    <div>
-                                        <label className="flex items-center gap-2 cursor-pointer mb-2 group select-none">
-                                            <input type="checkbox" checked={commonData.useLiff} onChange={(e) => setCommonData((prev) => ({ ...prev, useLiff: e.target.checked }))} className="w-4 h-4 accent-emerald-500" />
-                                            <span className="text-sm font-bold text-slate-700 group-hover:text-emerald-600 transition">啟用 LINE LIFF 整合</span>
-                                        </label>
-                                        {commonData.useLiff && (
-                                            <div className="ml-6 flex flex-col gap-3 animate-fade-in-up mt-2">
-                                                <div>
-                                                    <label className="text-xs text-slate-500 block mb-1">LINE LIFF ID</label>
-                                                    <input type="text" name="liffId" value={commonData.liffId} onChange={handleCommonChange} placeholder="請填入從 LINE Developer 取回的 LIFF ID" className="w-full rounded p-2 text-sm outline-none bg-white border border-emerald-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200" />
-                                                </div>
-                                                <div className="flex flex-col gap-2 bg-emerald-50 p-4 rounded-xl border border-emerald-100">
-                                                    <span className="text-sm font-bold text-emerald-700 mb-1">希望 LINE LIFF 功能包含：</span>
-                                                    <label className="flex items-center gap-2 cursor-pointer text-sm text-emerald-800 p-1 hover:bg-emerald-100 rounded">
-                                                        <input type="checkbox" className="w-4 h-4 accent-emerald-500" checked={commonData.liffFeatures?.includes('profile')} onChange={(e) => { const current = commonData.liffFeatures || []; const next = e.target.checked ? [...current, 'profile'] : current.filter((f) => f !== 'profile'); setCommonData((prev) => ({ ...prev, liffFeatures: next })); }} />
-                                                        取得用戶基本資料 (Profile)
-                                                    </label>
-                                                    <label className="flex items-center gap-2 cursor-pointer text-sm text-emerald-800 p-1 hover:bg-emerald-100 rounded">
-                                                        <input type="checkbox" className="w-4 h-4 accent-emerald-500" checked={commonData.liffFeatures?.includes('sendMessages')} onChange={(e) => { const current = commonData.liffFeatures || []; const next = e.target.checked ? [...current, 'sendMessages'] : current.filter((f) => f !== 'sendMessages'); setCommonData((prev) => ({ ...prev, liffFeatures: next })); }} />
-                                                        傳送訊息到聊天室 (Send Messages)
-                                                    </label>
-                                                    <label className="flex items-center gap-2 cursor-pointer text-sm text-emerald-800 p-1 hover:bg-emerald-100 rounded">
-                                                        <input type="checkbox" className="w-4 h-4 accent-emerald-500" checked={commonData.liffFeatures?.includes('shareTargetPicker')} onChange={(e) => { const current = commonData.liffFeatures || []; const next = e.target.checked ? [...current, 'shareTargetPicker'] : current.filter((f) => f !== 'shareTargetPicker'); setCommonData((prev) => ({ ...prev, liffFeatures: next })); }} />
-                                                        分享訊息給好友 (Share Target Picker)
-                                                    </label>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -975,7 +977,8 @@ ${baseInfo}
                         className="w-full h-64 rounded-xl p-4 font-mono text-xs bg-white border border-slate-300 text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none resize-none"
                         placeholder="請貼上 Gemini 產生的 <html>...</html>"
                         value={commonData.htmlCode}
-                        onChange={(e) => setCommonData((prev) => ({ ...prev, htmlCode: e.target.value }))}
+                        onChange={(e) => handleHtmlCodeChange(e.target.value)}
+                        onPaste={handleHtmlCodePaste}
                         onFocus={(e) => e.target.select()}
                     ></textarea>
 
