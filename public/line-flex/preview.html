@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 落地師 Flex Message Preview</title>
+    <style>
+      body {
+        margin: 0;
+        background: #030712;
+        color: #f8fafc;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+      }
+      main {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(28px, 5vw, 48px);
+      }
+      p {
+        color: #94a3b8;
+        margin: 0 0 24px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px;
+      }
+      .bubble {
+        overflow: hidden;
+        border: 1px solid rgba(56, 189, 248, 0.24);
+        border-radius: 24px;
+        background: #020617;
+        box-shadow: 0 20px 44px rgba(0, 0, 0, 0.35);
+      }
+      img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 9 / 16;
+        object-fit: cover;
+      }
+      .bubble a {
+        display: block;
+      }
+      .share {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        margin: 12px;
+        border-radius: 14px;
+        background: #1f2937;
+        color: #f8fafc;
+        font-weight: 800;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AI 落地師 Flex Message Preview</h1>
+      <p>實際 Flex JSON 在 ai-course-flex-message.json；每張圖可點擊前往報名頁，底部按鈕可開啟分享頁。</p>
+      <section class="grid">
+        <article class="bubble"><a href="/signup"><img src="./01-hero.png" alt="Flex 01" /></a><a class="share" href="/signup/line">分享給朋友</a></article>
+        <article class="bubble"><a href="/signup"><img src="./02-journey.png?v=20260517-user" alt="Flex 02" /></a><a class="share" href="/signup/line">分享給朋友</a></article>
+        <article class="bubble"><a href="/signup"><img src="./03-results.png?v=20260517-user" alt="Flex 03" /></a><a class="share" href="/signup/line">分享給朋友</a></article>
+        <article class="bubble"><a href="/signup"><img src="./04-tools.png?v=20260517-user" alt="Flex 04" /></a><a class="share" href="/signup/line">分享給朋友</a></article>
+        <article class="bubble"><a href="/signup"><img src="./05-signup.png?v=20260517-user" alt="Flex 05" /></a><a class="share" href="/signup/line">分享給朋友</a></article>
+      </section>
+    </main>
+  </body>
+</html>

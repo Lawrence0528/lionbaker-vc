@@ -1,8 +1,22 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+    ArrowRight,
+    BadgeCheck,
+    Bot,
+    BrainCircuit,
+    CheckCircle2,
+    ChevronDown,
+    CircleDollarSign,
+    MessageSquareText,
+    MousePointerClick,
+    Rocket,
+    Share2,
+    Sparkles,
+    Target,
+} from 'lucide-react';
 import SEO from '../../components/SEO';
 import { db, functions } from '../../firebase';
 import {
-    resolvePosterSrc,
     resolvePosterSeoUrl,
     SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION,
     VIBE_REFERRAL_CODES_COLLECTION,
@@ -14,7 +28,7 @@ import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/fires
 import { httpsCallable } from 'firebase/functions';
 import liff from '@line/liff';
 
-const LIFF_ID = '2008963361-MrRNV5vJ';
+const LIFF_ID = '2008893070-ZtPU49Et';
 const LINE_OA_ID = '@217vdaka';
 
 function buildYoutubeShortEmbedSrc(videoId, { muted, autoplay }) {
@@ -50,6 +64,38 @@ const normalizeGuiInput = (raw) =>
 
 const REFRESHER_FEE = 500;
 const DEFAULT_REFRESHER_MAX = 10;
+
+const transformationSteps = [
+    { from: '只會問', to: '會下有效指令', icon: MessageSquareText },
+    { from: '拿答案', to: '會拆解需求', icon: BrainCircuit },
+    { from: '找工具', to: '會選 AI 工具鏈', icon: Bot },
+    { from: '聽概念', to: '做出可用成果', icon: Rocket },
+];
+
+const aiLevelCards = [
+    { title: 'AI 幼幼班', desc: '只會問簡單問題、常常覺得答案不準。', accent: 'border-zinc-700 bg-zinc-900/70', icon: Sparkles },
+    { title: '偶爾使用', desc: '用過 ChatGPT / Gemini，但缺系統化方法。', accent: 'border-emerald-500/30 bg-emerald-500/5', icon: MessageSquareText },
+    { title: '每天在用', desc: '知道 AI 好用，但還沒變成自己的工作流程。', accent: 'border-amber-500/30 bg-amber-500/5', icon: BrainCircuit },
+    { title: '想靠 AI 放大', desc: '已經有產品或服務，想做出拓客與成交工具。', accent: 'border-sky-500/30 bg-sky-500/5', icon: CircleDollarSign },
+];
+
+const courseTimeline = [
+    { title: 'AI 狀態診斷', desc: '找出你卡在哪：工具、提問、流程，還是落地。' },
+    { title: 'AI 工具地圖', desc: 'ChatGPT、Gemini、Claude、Perplexity、Canva AI，知道什麼任務該用誰。' },
+    { title: '提詞 4 元素實戰', desc: '用角色、任務、背景、格式，把模糊需求變成可執行指令。' },
+    { title: '讓 AI 當你的老師', desc: '不追工具清單，學會叫 AI 幫你選工具、給模板、拆流程。' },
+    { title: '貼圖 / 視覺素材生成', desc: '做出能在社群、LINE、品牌溝通裡使用的素材。' },
+    { title: 'AI 電子名片與 NFC', desc: '生成名片頁，寫入 NFC，讓客戶一碰手機就看到你。' },
+    { title: '程式小工具與部署', desc: '用 Gemini Canvas 做出簡單工具，學會修改、上線與分享。' },
+];
+
+const flexVisualStories = [
+    { src: '/line-flex/01-hero.png', alt: '你不是要學更多 AI 工具，你要讓 AI 幫你做出東西' },
+    { src: '/line-flex/02-journey.png?v=20260517-user', alt: '從 AI 幼幼班升級成 AI 指揮官' },
+    { src: '/line-flex/03-results.png?v=20260517-user', alt: '當天帶走 5 個實作成果' },
+    { src: '/line-flex/04-tools.png?v=20260517-user', alt: '不寫程式也能做出程式' },
+    { src: '/line-flex/05-signup.png?v=20260517-user', alt: '1 天實作課，把 AI 變成你的工作助力' },
+];
 
 const formatRefresherPreviousLabel = (s) => {
     if (!s) return '';
@@ -166,7 +212,6 @@ const Signup = () => {
     const { youtubeVideos: landingYoutubeVideos, posterImageUrl: landingPosterUrl } = useSignupLandingSettings();
 
     const siteOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.lionbaker.com';
-    const posterSrc = resolvePosterSrc(landingPosterUrl);
     const seoImage = resolvePosterSeoUrl(landingPosterUrl, siteOrigin);
     const seoUrl = `${siteOrigin}/vibe`;
 
@@ -190,6 +235,13 @@ const Signup = () => {
         const n = Number(selectedSessionObj.refresherMaxCapacity);
         return n > 0 ? n : DEFAULT_REFRESHER_MAX;
     }, [selectedSessionObj]);
+    const featuredSession = selectedSessionObj || sessions.find((s) => s.status === 'open') || sessions[0] || null;
+    const featuredRemaining = featuredSession
+        ? Math.max(0, (featuredSession.maxCapacity || 50) - (featuredSession.currentCount || 0))
+        : null;
+    const featuredPrice = featuredSession
+        ? Math.max(0, (Number(featuredSession.price) || 0) - (courseDiscountVerified ? courseDiscountAmountNtd : 0))
+        : 3980;
 
     useEffect(() => {
         if (signupReferralLocked) return;
@@ -247,6 +299,8 @@ const Signup = () => {
     useEffect(() => {
         const init = async () => {
             try {
+                const host = typeof window !== 'undefined' ? window.location.hostname : '';
+                if (host === 'localhost' || host === '127.0.0.1') return;
                 if (LIFF_ID && LIFF_ID !== 'MY_LIFF_ID') {
                     await liff.init({ liffId: LIFF_ID });
                     if (liff.isLoggedIn()) {
@@ -730,6 +784,7 @@ const Signup = () => {
                 @keyframes gradientShift { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
                 @keyframes pulseGlow { 0%,100%{box-shadow:0 0 20px rgba(56,189,248,0.2)} 50%{box-shadow:0 0 40px rgba(56,189,248,0.45)} }
                 @keyframes ticker { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+                @keyframes scanFlow { 0%{transform:translateX(-20%);opacity:.15} 50%{opacity:.45} 100%{transform:translateX(120%);opacity:.12} }
                 .hero-title { animation: heroFadeIn 1.1s cubic-bezier(0.16,1,0.3,1) 0.1s both; }
                 .hero-sub { animation: heroFadeIn 1.1s cubic-bezier(0.16,1,0.3,1) 0.3s both; }
                 .hero-ctas { animation: heroFadeIn 1.1s cubic-bezier(0.16,1,0.3,1) 0.5s both; }
@@ -744,11 +799,13 @@ const Signup = () => {
                 .glow-btn { box-shadow: 0 0 0 rgba(56,189,248,0); transition: box-shadow 0.3s ease, transform 0.2s ease; }
                 .glow-btn:hover { box-shadow: 0 0 30px rgba(56,189,248,0.4); transform: scale(1.02); }
                 .glow-btn:active { transform: scale(0.98); }
+                .result-grid { background-image: linear-gradient(rgba(56,189,248,.11) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,.11) 1px, transparent 1px); background-size: 34px 34px; }
+                .scan-sheen::after { content:''; position:absolute; inset:0; width:45%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent); animation:scanFlow 4.8s ease-in-out infinite; pointer-events:none; }
             `}</style>
 
             <SEO
                 title="AI落地師培訓班｜報名"
-                description="2026年在 AI 崛起的年代你還沒跟上嗎？零基礎也能學會 AI 變現與行銷整合，實戰打造拓客工具與電子名片。"
+                description="從只會問 AI 簡單問題，到會指揮 AI 做出貼圖、電子名片、NFC 應用與可用小工具。一天實作，零基礎也能帶走成果。"
                 image={seoImage} url={seoUrl} type="website" appName="LionBaker"
             />
 
@@ -758,40 +815,72 @@ const Signup = () => {
                 <div className="absolute inset-0">
                     <img src="/bg.jpg" alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover object-center"
                         style={{ transform: `translateY(${parallaxOffset}px)`, willChange: 'transform', scale: '1.1' }} />
-                    <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/60 to-black" />
-                    <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-transparent to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/88 via-[#06111f]/82 to-black" />
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_35%,rgba(14,165,233,.25),transparent_34%),radial-gradient(circle_at_30%_70%,rgba(245,158,11,.14),transparent_28%)]" />
                 </div>
 
-                {/* Ambient orbs */}
-                <div className="absolute top-1/4 left-1/3 w-[600px] h-[600px] rounded-full bg-sky-500/10 blur-[120px] pointer-events-none" />
-                <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-violet-500/10 blur-[100px] pointer-events-none" />
-
-                <div className="relative z-10 mx-auto w-full max-w-6xl px-6 pt-20 pb-32">
-                    {/* 首頁 hero 不放海報；海報固定排在下方「你會帶走」區塊之後 */}
-                    <div className="max-w-3xl">
-                        <div className="hero-title inline-flex items-center gap-2 rounded-full bg-white/5 border border-white/10 backdrop-blur px-4 py-1.5 text-xs font-semibold text-sky-300 mb-8">
+                <div className="relative z-10 mx-auto grid w-full max-w-7xl grid-cols-1 items-center gap-8 px-5 pb-28 pt-8 lg:grid-cols-[1.08fr_.92fr] lg:px-8 lg:pt-24">
+                    <div className="order-2 max-w-3xl lg:order-1">
+                        <div className="hero-title inline-flex items-center gap-2 rounded-full bg-white/5 border border-white/10 backdrop-blur px-4 py-1.5 text-xs font-semibold text-sky-300 mb-6">
                             <span className="w-1.5 h-1.5 rounded-full bg-sky-400 inline-block" style={{boxShadow:'0 0 8px #38bdf8'}}></span>
-                            2026 AI 落地實戰 · 台灣唯一實作培訓
+                            2026 AI 落地實作課 · 零基礎也能帶走成果
                         </div>
 
-                        <h1 className="hero-title text-5xl sm:text-6xl lg:text-7xl font-black leading-[1.05] tracking-tight text-white mb-6">
-                            讓 AI 替你<br />
-                            <span className="gradient-text">賺錢、拓客、成交</span>
+                        <h1 className="hero-title text-4xl sm:text-6xl lg:text-7xl font-black leading-[1.04] tracking-tight text-white mb-6">
+                            從只會問 AI<br />
+                            到會指揮 AI<br />
+                            <span className="gradient-text">做出可用工具</span>
                         </h1>
 
-                        <p className="hero-sub text-xl sm:text-2xl text-zinc-300 leading-relaxed max-w-xl mb-10">
-                            一天實作課，零基礎帶走可用工具。<br />
-                            <span className="text-white font-semibold">不寫程式、不買主機</span>，只要會打字就能上手。
+                        <p className="hero-sub text-lg sm:text-2xl text-zinc-300 leading-relaxed max-w-2xl mb-8">
+                            一天帶你從 AI 幼幼班升級：學會提詞、生成貼圖、完成電子名片與 NFC 應用，甚至用 Gemini Canvas 做出解決工作問題的小工具。
                         </p>
 
-                        <div className="hero-ctas flex flex-wrap gap-4">
-                            <a href="#signup-form" className="glow-btn inline-flex items-center justify-center rounded-2xl bg-sky-500 px-8 py-4 text-white font-bold text-lg shadow-xl">
-                                立即報名
-                                <svg className="ml-2 w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                        <div className="hero-sub mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                            {transformationSteps.map((item) => {
+                                const Icon = item.icon;
+                                return (
+                                    <div key={item.to} className="rounded-2xl border border-sky-200/25 bg-black/35 px-3 py-3 shadow-lg shadow-black/15 backdrop-blur">
+                                        <Icon className="mb-2 h-4 w-4 text-sky-200" />
+                                        <p className="text-xs font-bold text-sky-100/80">{item.from}</p>
+                                        <p className="text-sm font-black text-white">{item.to}</p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="hero-ctas flex flex-wrap gap-3">
+                            <a href="#signup-form" className="glow-btn inline-flex items-center justify-center rounded-2xl bg-sky-500 px-7 py-4 text-white font-black text-base sm:text-lg shadow-xl">
+                                我要做出我的 AI 工具
+                                <ArrowRight className="ml-2 h-5 w-5" />
                             </a>
-                            <a href="#course" className="inline-flex items-center justify-center rounded-2xl bg-white/8 border border-white/15 backdrop-blur px-8 py-4 text-white font-bold text-lg hover:bg-white/12 transition-colors">
-                                了解課程
+                        </div>
+                    </div>
+
+                    <div className="hero-title relative order-1 lg:order-2">
+                        <div className="relative overflow-hidden rounded-[2rem] border border-sky-400/25 bg-zinc-950 shadow-2xl shadow-sky-950/40">
+                            <a href="#signup-form" className="block">
+                                <img
+                                    src="/line-flex/01-hero.png"
+                                    alt="AI 落地師培訓班視覺重點：你不是要學更多 AI 工具，你要讓 AI 幫你做出東西"
+                                    className="block w-full object-cover"
+                                    loading="eager"
+                                    decoding="async"
+                                />
                             </a>
+                        </div>
+                        <div className="mt-4 rounded-2xl border border-amber-300/25 bg-amber-300/10 p-4 backdrop-blur">
+                            <p className="text-xs font-bold text-amber-200">下一梯次</p>
+                            <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
+                                <div>
+                                    <p className="text-lg font-black text-white">{featuredSession?.displayDate || '即將公布'}</p>
+                                    <p className="text-xs text-zinc-400">{featuredSession?.location || '台中實體課程'}</p>
+                                </div>
+                                <div className="rounded-xl bg-black/35 px-3 py-2 text-right">
+                                    <p className="text-3xl font-black text-amber-200">${featuredPrice.toLocaleString()}</p>
+                                    {featuredRemaining != null ? <p className="text-xs font-bold text-white">正課剩 {featuredRemaining} 位</p> : null}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -800,7 +889,7 @@ const Signup = () => {
                 <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 opacity-50">
                     <span className="text-xs text-zinc-400 tracking-widest uppercase">Scroll</span>
                     <div className="scroll-bounce w-5 h-5 text-zinc-400">
-                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        <ChevronDown />
                     </div>
                 </div>
             </section>
@@ -810,7 +899,7 @@ const Signup = () => {
                 <div className="ticker-track">
                     {[...Array(2)].map((_, i) => (
                         <div key={i} className="flex items-center gap-8 px-4">
-                            {['零基礎也能學會', 'AI 落地實戰', '一天帶走可用工具', '不用寫程式', '立即可複製流程', '真實學員回饋', '拓客 · 成交 · 複製', '2026 限定場次'].map((t) => (
+                            {['AI 幼幼班也能開始', '貼圖素材生成', '電子名片 NFC', 'Gemini Canvas 小工具', '4 元素提詞框架', '真實學員回饋', '不寫程式也能做', '當天完成可用成果'].map((t) => (
                                 <span key={t} className="flex items-center gap-3 text-sm font-semibold text-zinc-500 whitespace-nowrap">
                                     <span className="w-1 h-1 rounded-full bg-sky-500/60 inline-block shrink-0" />
                                     {t}
@@ -822,21 +911,57 @@ const Signup = () => {
             </div>
 
             {/* ══ STATS ════════════════════════════════════════════ */}
-            <section className="py-24 bg-zinc-950">
+            <section className="py-16 bg-zinc-950">
                 <div className="mx-auto max-w-6xl px-6">
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        {[
-                            { num: '1 天', label: '完整實作課程', sub: '從零到上線' },
-                            { num: '零基礎', label: '無任何門檻', sub: '只要會打字' },
-                            { num: '3 樣', label: '帶走實戰工具', sub: '可即時使用' },
-                            { num: '複製', label: '可傳授的流程', sub: 'AI 落地方法論' },
-                        ].map((s, i) => (
-                            <Reveal key={s.num} delay={i * 80}>
-                                <div className="card-hover rounded-3xl bg-zinc-900 border border-zinc-800 p-6 text-center">
-                                    <div className="text-3xl font-black text-white mb-1">{s.num}</div>
-                                    <div className="text-sm font-semibold text-zinc-300">{s.label}</div>
-                                    <div className="text-xs text-zinc-600 mt-1">{s.sub}</div>
-                                </div>
+                    <div className="mb-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+                        <div>
+                            <p className="text-xs font-bold tracking-[.28em] text-sky-400">START FROM YOUR LEVEL</p>
+                            <h2 className="mt-2 text-3xl font-black text-white">你現在在哪裡，都可以升級</h2>
+                        </div>
+                        <a href="#signup-form" className="hidden rounded-2xl border border-sky-400/30 bg-sky-400/10 px-5 py-3 text-sm font-black text-sky-200 hover:bg-sky-400/15 sm:inline-flex">
+                            先卡位 <ArrowRight className="ml-2 h-4 w-4" />
+                        </a>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        {aiLevelCards.map((s, i) => {
+                            const Icon = s.icon;
+                            return (
+                                <Reveal key={s.title} delay={i * 80}>
+                                    <div className={`card-hover h-full rounded-3xl border p-6 ${s.accent}`}>
+                                        <Icon className="mb-5 h-7 w-7 text-sky-300" />
+                                        <div className="text-xl font-black text-white mb-2">{s.title}</div>
+                                        <div className="text-sm text-zinc-400 leading-relaxed">{s.desc}</div>
+                                        <div className="mt-5 inline-flex items-center gap-2 text-xs font-bold text-sky-300">
+                                            今天升一級 <ArrowRight className="h-3.5 w-3.5" />
+                                        </div>
+                                    </div>
+                                </Reveal>
+                            );
+                        })}
+                    </div>
+                </div>
+            </section>
+
+            <section id="visual-story" className="bg-zinc-950 py-20">
+                <div className="mx-auto max-w-7xl px-5 lg:px-8">
+                    <Reveal>
+                        <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+                            <div className="max-w-3xl">
+                                <p className="text-xs font-bold tracking-[.28em] text-sky-400">VISUAL STORY</p>
+                                <h2 className="mt-3 text-3xl font-black text-white sm:text-5xl">想知道這堂課教什麼？</h2>
+                            </div>
+                            <a href="#signup-form" className="inline-flex w-fit items-center rounded-2xl bg-sky-500 px-6 py-3 text-sm font-black text-white hover:bg-sky-400">
+                                立即保留座位 <ArrowRight className="ml-2 h-4 w-4" />
+                            </a>
+                        </div>
+                    </Reveal>
+
+                    <div className="grid grid-cols-1 gap-6 lg:-mx-0 lg:flex lg:snap-x lg:snap-mandatory lg:overflow-x-auto lg:px-0 lg:pb-4 xl:gap-6">
+                        {flexVisualStories.slice(1).map((story, i) => (
+                            <Reveal key={story.src} delay={i * 50} className="w-full lg:w-[360px] lg:max-w-none lg:shrink-0 lg:snap-start xl:w-[420px]">
+                                <a href="#signup-form" className="group block overflow-hidden rounded-3xl border border-sky-400/20 bg-black shadow-xl shadow-black/40">
+                                    <img src={story.src} alt={story.alt} className="aspect-[9/16] w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]" loading={i === 0 ? 'eager' : 'lazy'} decoding="async" />
+                                </a>
                             </Reveal>
                         ))}
                     </div>
@@ -1001,76 +1126,39 @@ const Signup = () => {
                             <Reveal>
                                 <article className="rounded-3xl bg-zinc-900 border border-zinc-800 p-7">
                                     <div className="inline-flex items-center gap-2 rounded-full bg-sky-500/10 border border-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-400 mb-4">課程核心</div>
-                                    <h2 className="text-2xl font-black text-white mb-4">你來對了</h2>
+                                    <h2 className="text-2xl font-black text-white mb-4">你不是缺 AI 工具清單，是缺一套落地方法</h2>
                                     <p className="text-zinc-400 leading-relaxed mb-6">
-                                        2026 年，AI 已經不是「未來的技術」，而是<span className="text-white font-semibold">現在能賺錢的工具</span>。這堂課只有一個目標：讓你帶著<span className="text-white font-semibold">可用的成果</span>回家，而不是一肚子「應該很有用」的知識。
+                                        這堂課從最基礎的提問開始，帶你一路走到「AI 幫你產出工具」。你會學會怎麼描述需求、怎麼迭代結果、怎麼把貼圖、名片、小程式變成你的工作流程。
                                     </p>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         {[
-                                            { icon: '⚡', title: '當天實作', desc: '課堂完成你的電子名片與拓客工具，不帶未完成的作業回家' },
-                                            { icon: '🎯', title: '精準落地', desc: '依你的產業情境客製，不是通用範例，而是你的實際工具' },
-                                            { icon: '♾️', title: '流程可複製', desc: '學會「AI 落地方法論」，往後每個需求都能自己解決' },
-                                            { icon: '🚀', title: '立即上線', desc: '不需要主機、不需要工程師，手機就能部署上線' },
-                                        ].map((item, i) => (
+                                            { icon: MousePointerClick, title: '只要會打字', desc: '不用程式背景，學的是如何指揮 AI 把想法做出來' },
+                                            { icon: Target, title: '用你的產業練習', desc: '不是通用範例，而是把你的工作問題拿來拆解' },
+                                            { icon: CheckCircle2, title: '成果看得見', desc: '貼圖、電子名片、NFC、工具流程，當天就能展示' },
+                                            { icon: Share2, title: '能分享能延伸', desc: '帶走可複製的提示詞與流程，回去能繼續改' },
+                                        ].map((item, i) => {
+                                            const Icon = item.icon;
+                                            return (
                                             <Reveal key={item.title} delay={i * 60} direction="up">
                                                 <div className="rounded-2xl bg-zinc-800/60 border border-zinc-700/50 p-4">
-                                                    <div className="text-xl mb-2">{item.icon}</div>
+                                                    <Icon className="mb-3 h-5 w-5 text-sky-300" />
                                                     <p className="font-bold text-white text-sm mb-1">{item.title}</p>
                                                     <p className="text-xs text-zinc-500 leading-relaxed">{item.desc}</p>
                                                 </div>
                                             </Reveal>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </article>
-                            </Reveal>
-
-                            {/* What you'll take home */}
-                            <Reveal>
-                                <article className="rounded-3xl bg-gradient-to-br from-sky-950/60 to-violet-950/60 border border-sky-500/20 p-7">
-                                    <div className="inline-flex items-center gap-2 rounded-full bg-sky-500/10 border border-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-400 mb-4">你會帶走</div>
-                                    <h2 className="text-xl font-black text-white mb-5">三樣實戰成果，當天完成</h2>
-                                    <div className="space-y-3">
-                                        {[
-                                            { n: '01', title: '你的專屬電子名片', desc: '可展示、可分享、可引導成交的高科技名片，結合 NFC 貼片現場製作' },
-                                            { n: '02', title: '產業拓客工具', desc: '依你的行業量身打造，讓 AI 幫你做客戶開發，可直接拿來用' },
-                                            { n: '03', title: 'AI 落地流程手冊', desc: '從需求拆解 → 提示詞 → 產出 → 整合 → 上線，完整可複製方法論' },
-                                        ].map((item, i) => (
-                                            <Reveal key={item.n} delay={i * 80} direction="left">
-                                                <div className="flex gap-4 items-start rounded-2xl bg-white/4 border border-white/6 p-4">
-                                                    <div className="shrink-0 w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/25 flex items-center justify-center font-black text-sky-400 text-xs">{item.n}</div>
-                                                    <div>
-                                                        <p className="font-bold text-white mb-0.5">{item.title}</p>
-                                                        <p className="text-xs text-zinc-500 leading-relaxed">{item.desc}</p>
-                                                    </div>
-                                                </div>
-                                            </Reveal>
-                                        ))}
-                                    </div>
-                                </article>
-                            </Reveal>
-
-                            {/* 活動海報：固定緊接「你會帶走」版塊（全解析度同一位置） */}
-                            <Reveal>
-                                <div className="rounded-3xl overflow-hidden shadow-2xl border border-zinc-800">
-                                    <img src={posterSrc} alt="AI落地師培訓班活動海報" className="w-full h-auto" loading="lazy" />
-                                </div>
                             </Reveal>
 
                             {/* Curriculum */}
                             <Reveal>
                                 <article className="rounded-3xl bg-zinc-900 border border-zinc-800 p-7">
                                     <div className="inline-flex items-center gap-2 rounded-full bg-violet-500/10 border border-violet-500/20 px-3 py-1 text-xs font-semibold text-violet-400 mb-4">課程流程</div>
-                                    <h2 className="text-xl font-black text-white mb-5">一天，七個關鍵時刻</h2>
+                                    <h2 className="text-xl font-black text-white mb-5">一天，從 AI 幼幼班走到工具上線</h2>
                                     <ol className="space-y-2">
-                                        {[
-                                            { title: '打開大腦・升級思維', desc: '2026 年最值錢的不是技術，是你如何思考 AI 能為你做什麼' },
-                                            { title: 'AI 落地案例大賞', desc: '跨產業的實際應用案例，找到你能立刻抄作業的靈感' },
-                                            { title: '免寫程式・也能做出程式', desc: '用可複製的對話框架，讓 AI 幫你生成完整功能' },
-                                            { title: '超簡單部署上線', desc: '手機就能完成，不需要電腦、不需要主機、不需要工程師' },
-                                            { title: 'LINE 貼圖實作', desc: '用 AI 設計你的吸睛品牌貼圖，完整教學到上架流程' },
-                                            { title: 'NFC 高科技電子名片', desc: '一碰手機就跳出你的名片頁面，讓客戶留下深刻印象' },
-                                            { title: '短影音腳本生成器', desc: '用工具批量產出短影音腳本，解決你最頭痛的內容問題' },
-                                        ].map((step, idx) => (
+                                        {courseTimeline.map((step, idx) => (
                                             <Reveal key={step.title} delay={idx * 50}>
                                                 <li className="flex gap-3 rounded-2xl bg-zinc-800/50 border border-zinc-700/40 p-4 hover:border-zinc-600/60 transition-colors">
                                                     <div className="shrink-0 w-8 h-8 rounded-xl bg-zinc-700 flex items-center justify-center font-black text-zinc-300 text-xs">{idx + 1}</div>
@@ -1095,7 +1183,7 @@ const Signup = () => {
                                     <div className="flex items-start justify-between gap-3 mb-5">
                                         <div>
                                             <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-400 mb-3">學員真心話</div>
-                                            <h2 className="text-xl font-black text-white">他們說的，比我說的更真</h2>
+                                            <h2 className="text-xl font-black text-white">零基礎學員，也真的做出來了</h2>
                                         </div>
                                         <button type="button" onClick={() => setIsVideoMuted(false)}
                                             className={`shrink-0 rounded-2xl border px-3 py-1.5 text-xs font-bold transition-all ${isVideoMuted ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>
@@ -1134,8 +1222,8 @@ const Signup = () => {
                             <Reveal direction="right">
                                 <div className="rounded-3xl bg-zinc-950 border border-zinc-800 overflow-hidden" style={{boxShadow:'0 0 0 1px rgba(255,255,255,0.04), 0 32px 64px rgba(0,0,0,0.6)'}}>
                                     <div className="bg-gradient-to-r from-sky-600 to-violet-600 px-6 py-5">
-                                        <h2 className="text-xl font-black text-white">立即報名</h2>
-                                        <p className="text-sky-100/80 text-sm mt-1">填寫資料完成報名，我們將以您提供的資訊進行確認。</p>
+                                        <h2 className="text-xl font-black text-white">保留你的實作座位</h2>
+                                        <p className="text-sky-100/80 text-sm mt-1">名額有限，送出後我們會依資料確認報名與付款。</p>
                                     </div>
 
                                     <form onSubmit={handleSubmit} className="p-5 sm:p-6 flex flex-col gap-5">
@@ -1332,7 +1420,7 @@ const Signup = () => {
                                         {/* Invoice */}
                                         {!formData.isTimeNotAvailable && formData.registrationKind === 'main' && (
                                             <div>
-                                                <p className="text-sm font-semibold text-zinc-300 mb-3">電子發票 <span className="text-rose-400">*</span></p>
+                                                <p className="text-sm font-semibold text-zinc-300 mb-3">開立發票 <span className="text-rose-400">*</span></p>
                                                 <div className="flex gap-3">
                                                     <label className="flex-1 flex items-center gap-2 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2.5 has-[:checked]:border-sky-500/50 has-[:checked]:bg-sky-500/5 transition-colors">
                                                         <input type="radio" name="invoiceType" className="h-4 w-4" checked={formData.invoiceType === 'general'} onChange={() => setFormData(prev => ({ ...prev, invoiceType: 'general', taxId: '' }))} />
@@ -1439,6 +1527,12 @@ const Signup = () => {
                     </div>
                 </div>
             </section>
+            <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-black/82 px-4 py-3 backdrop-blur-xl lg:hidden">
+                <a href="#signup-form" className="flex w-full items-center justify-center rounded-2xl bg-sky-500 px-5 py-3.5 text-base font-black text-white shadow-lg shadow-sky-950/40">
+                    立即保留名額
+                    <ArrowRight className="ml-2 h-5 w-5" />
+                </a>
+            </div>
         </main>
     );
 };

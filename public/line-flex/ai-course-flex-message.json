@@ -1,0 +1,170 @@
+{
+  "type": "carousel",
+  "contents": [
+    {
+      "type": "bubble",
+      "size": "mega",
+      "hero": {
+        "type": "image",
+        "url": "https://ai.lionbaker.com/line-flex/01-hero.png",
+        "size": "full",
+        "aspectRatio": "9:16",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "立即報名",
+          "uri": "https://ai.lionbaker.com/signup"
+        }
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+              "type": "uri",
+              "label": "分享給朋友",
+              "uri": "https://liff.line.me/2008893070-ZtPU49Et"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "bubble",
+      "size": "mega",
+      "hero": {
+        "type": "image",
+        "url": "https://ai.lionbaker.com/line-flex/02-journey.png?v=20260517-user",
+        "size": "full",
+        "aspectRatio": "9:16",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "立即報名",
+          "uri": "https://ai.lionbaker.com/signup"
+        }
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+              "type": "uri",
+              "label": "分享給朋友",
+              "uri": "https://liff.line.me/2008893070-ZtPU49Et"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "bubble",
+      "size": "mega",
+      "hero": {
+        "type": "image",
+        "url": "https://ai.lionbaker.com/line-flex/03-results.png?v=20260517-user",
+        "size": "full",
+        "aspectRatio": "9:16",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "立即報名",
+          "uri": "https://ai.lionbaker.com/signup"
+        }
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+              "type": "uri",
+              "label": "分享給朋友",
+              "uri": "https://liff.line.me/2008893070-ZtPU49Et"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "bubble",
+      "size": "mega",
+      "hero": {
+        "type": "image",
+        "url": "https://ai.lionbaker.com/line-flex/04-tools.png?v=20260517-user",
+        "size": "full",
+        "aspectRatio": "9:16",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "立即報名",
+          "uri": "https://ai.lionbaker.com/signup"
+        }
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+              "type": "uri",
+              "label": "分享給朋友",
+              "uri": "https://liff.line.me/2008893070-ZtPU49Et"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "bubble",
+      "size": "mega",
+      "hero": {
+        "type": "image",
+        "url": "https://ai.lionbaker.com/line-flex/05-signup.png?v=20260517-user",
+        "size": "full",
+        "aspectRatio": "9:16",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "立即報名",
+          "uri": "https://ai.lionbaker.com/signup"
+        }
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+              "type": "uri",
+              "label": "分享給朋友",
+              "uri": "https://liff.line.me/2008893070-ZtPU49Et"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

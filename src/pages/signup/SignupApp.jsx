@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 const Signup = lazy(() => import('./Signup'));
+const SignupLineShare = lazy(() => import('./SignupLineShare'));
 const SignupAdmin = lazy(() => import('./SignupAdmin'));
 const CheckIn = lazy(() => import('./CheckIn'));
 const CheckInProcess = lazy(() => import('./CheckInProcess'));
@@ -20,6 +21,7 @@ const SignupApp = () => {
     >
       <Routes>
         <Route path="/" element={<Signup />} />
+        <Route path="/line" element={<SignupLineShare />} />
         <Route path="/admin" element={<SignupAdmin />} />
         <Route path="/checkin/:uid" element={<CheckIn />} />
         <Route path="/checkin-process" element={<CheckInProcess />} />
@@ -30,4 +32,3 @@ const SignupApp = () => {
 };
 
 export default SignupApp;
-
