@@ -276,6 +276,9 @@ const SignupAdmin = () => {
         upperReferrerName: '',
     });
     const [identityVerifiedMap, setIdentityVerifiedMap] = useState({});
+    const [reconcileLastFive, setReconcileLastFive] = useState('');
+    const [reconcileMsg, setReconcileMsg] = useState('');
+    const [reconcileLoading, setReconcileLoading] = useState(false);
 
     /** 報名頁設定（Firestore + Storage 海報） */
     const [landingDraft, setLandingDraft] = useState(null);
@@ -1104,7 +1107,7 @@ const SignupAdmin = () => {
 
     // --- Registration Actions ---
 
-    const openEditModal = (reg) => {
+    const openEditModal = (reg, sessionOverride = selectedSession) => {
         setEditTarget(reg);
         const isInvoiceEditable =
             (reg.registrationKind || 'main') !== 'refresher' && reg.invoiceType !== 'refresher_exempt';
@@ -1112,9 +1115,9 @@ const SignupAdmin = () => {
         setEditForm({
             status: reg.status || 'pending',
             paymentMethod: reg.paymentMethod || 'transfer',
-            receivedAmount: reg.receivedAmount ?? (reg.registrationKind === 'refresher' ? REFRESHER_FEE : (selectedSession?.price || 1980)),
+            receivedAmount: reg.receivedAmount ?? (reg.registrationKind === 'refresher' ? REFRESHER_FEE : (sessionOverride?.price || 1980)),
             adminNote: reg.adminNote || '',
-            sessionId: reg.sessionId || selectedSession?.id || '',
+            sessionId: reg.sessionId || sessionOverride?.id || '',
             payee: reg.payee || '',
             invoiceType: isInvoiceEditable && reg.invoiceType === 'tax_id' ? 'tax_id' : 'general',
             taxId: isInvoiceEditable && reg.taxId ? String(reg.taxId) : '',
@@ -1122,6 +1125,74 @@ const SignupAdmin = () => {
             upperReferrerName: refParts.upperReferrerName,
         });
         setIsEditRegOpen(true);
+    };
+
+    const handleReconcileByLastFive = async (e) => {
+        e.preventDefault();
+        const digits = String(reconcileLastFive || '').replace(/\D/g, '').slice(0, 5);
+        setReconcileLastFive(digits);
+        setReconcileMsg('');
+        if (!/^\d{5}$/.test(digits)) {
+            setReconcileMsg('請輸入完整 5 碼。');
+            return;
+        }
+        if (!isAdmin) return;
+        setReconcileLoading(true);
+        try {
+            if (isMockMode) {
+                const hit = registrations.find((r) => String(r.lastFive || '').replace(/\D/g, '') === digits);
+                if (!hit) {
+                    setReconcileMsg('目前 mock 名單查無此後五碼。');
+                    return;
+                }
+                openEditModal(hit, selectedSession);
+                setReconcileMsg(`已找到 ${hit.name || '學員'}，已開啟核對資料。`);
+                return;
+            }
+
+            const searchFn = httpsCallable(functions, 'searchVibeRegistrationByLastFive');
+            const result = await searchFn({ lastFive: digits });
+            const data = result?.data || {};
+            if (!data.found || !data.registration) {
+                setReconcileMsg('查無此後五碼。');
+                return;
+            }
+            const targetSession = data.session || sessions.find((s) => s.id === data.registration.sessionId) || {
+                id: data.registration.sessionId || 'unknown_session',
+                title: data.registration.sessionTitle || '未命名場次',
+                date: data.registration.sessionDate || null,
+                location: data.registration.sessionLocation || '',
+                address: data.registration.sessionAddress || '',
+                price: data.registration.registrationKind === 'refresher' ? REFRESHER_FEE : 0,
+                maxCapacity: 0,
+                currentCount: 0,
+                refresherMaxCapacity: DEFAULT_REFRESHER_MAX,
+                refresherCurrentCount: 0,
+            };
+            if (targetSession) {
+                setSelectedSession(targetSession);
+                setViewMode('registrations');
+                setRegistrationListTab(data.registration.registrationKind === 'refresher' ? 'refresher' : 'main');
+            }
+
+            let regs = [data.registration];
+            if (data.registration.sessionId) {
+                const getRegFn = httpsCallable(functions, 'getVibeRegistrations');
+                const regsResult = await getRegFn({ sessionId: data.registration.sessionId });
+                regs = regsResult.data.registrations || [];
+            }
+            setRegistrations(regs);
+            setIdentityVerifiedMap({});
+            const freshestTarget = regs.find((r) => r.id === data.registration.id) || data.registration;
+            openEditModal(freshestTarget, targetSession);
+            const duplicateHint = data.totalMatches > 1 ? `（同後五碼共 ${data.totalMatches} 筆，已開啟最新未取消資料）` : '';
+            setReconcileMsg(`已找到 ${freshestTarget.name || '學員'}，已進入該場次核對資料。${duplicateHint}`);
+        } catch (err) {
+            console.error(err);
+            setReconcileMsg(`查詢失敗：${err.message || err}`);
+        } finally {
+            setReconcileLoading(false);
+        }
     };
 
     const handleUpdateRegistration = async () => {
@@ -1905,6 +1976,52 @@ const SignupAdmin = () => {
         }));
     };
 
+    const renderReconciliationPanel = () => {
+        if (!isAdmin) return null;
+        return (
+            <form
+                onSubmit={handleReconcileByLastFive}
+                className="mb-6 rounded-xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm"
+            >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="min-w-0">
+                        <h2 className="text-sm font-black text-amber-950">後五碼對帳</h2>
+                        <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                            輸入轉帳後五碼，系統會跨場次搜尋報名資料並直接開啟編輯 / 核對資料。
+                        </p>
+                    </div>
+                    <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={5}
+                            value={reconcileLastFive}
+                            onChange={(e) => {
+                                setReconcileLastFive(e.target.value.replace(/\D/g, '').slice(0, 5));
+                                setReconcileMsg('');
+                            }}
+                            className="h-11 w-full rounded-lg border border-amber-200 bg-white px-3 font-mono text-base font-bold tracking-wider text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 sm:w-40"
+                            placeholder="後五碼"
+                            aria-label="轉帳後五碼"
+                        />
+                        <button
+                            type="submit"
+                            disabled={reconcileLoading || reconcileLastFive.length !== 5}
+                            className="inline-flex h-11 items-center justify-center rounded-lg bg-amber-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {reconcileLoading ? '查詢中...' : '開始對帳'}
+                        </button>
+                    </div>
+                </div>
+                {reconcileMsg && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2 text-sm font-medium text-amber-900">
+                        {reconcileMsg}
+                    </div>
+                )}
+            </form>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans">
             <div className="max-w-6xl mx-auto">
@@ -2000,6 +2117,8 @@ const SignupAdmin = () => {
                     </div>
                 ) : (
                     <>
+                        {(viewMode === 'sessions' || viewMode === 'registrations') && renderReconciliationPanel()}
+
                         {/* VIEW MODE: 報名頁公開設定（影片 / 海報） */}
                         {viewMode === 'landing' && (
                             <section className="bg-white rounded-xl shadow-md border border-slate-200 p-6 md:p-8 mb-8">
@@ -3092,7 +3211,6 @@ const SignupAdmin = () => {
                                                     const paymentTail = reg.paymentMethod === 'transfer' && reg.lastFive
                                                         ? `（末五碼 ${reg.lastFive}）`
                                                         : '';
-                                                    const previousSessionText = getRefresherPreviousSessionText(reg);
                                                     return (
                                                     <article
                                                         key={reg.id}

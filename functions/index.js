@@ -1482,6 +1482,55 @@ exports.getVibeRegistrations = onCall(async (request) => {
     return { registrations, mode };
 });
 
+exports.searchVibeRegistrationByLastFive = onCall(async (request) => {
+    await assertAdmin(request);
+    const lastFive = String(request.data?.lastFive || "").replace(/\D/g, "").slice(0, 5);
+    if (!/^\d{5}$/.test(lastFive)) {
+        throw new HttpsError("invalid-argument", "請輸入 5 碼轉帳後五碼。");
+    }
+
+    const snap = await db
+        .collection(VIBE_REGISTRATIONS_COL)
+        .where("lastFive", "==", lastFive)
+        .limit(20)
+        .get();
+
+    const rows = snap.docs
+        .map((d) => {
+            const r = d.data() || {};
+            return {
+                id: d.id,
+                ...r,
+                createdAt: toIso(r.createdAt),
+                updatedAt: toIso(r.updatedAt),
+                count: typeof r.count === "number" ? r.count : Number(r.count || 1),
+                receivedAmount: typeof r.receivedAmount === "number" ? r.receivedAmount : Number(r.receivedAmount || 0),
+            };
+        })
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+    const match = rows.find((r) => String(r.status || "pending") !== "cancelled") || rows[0] || null;
+    if (!match) {
+        return { found: false };
+    }
+
+    const sessionId = String(match.sessionId || "");
+    let session = null;
+    if (sessionId) {
+        const sessionSnap = await db.collection(VIBE_SESSIONS_COL).doc(sessionId).get();
+        if (sessionSnap.exists) {
+            session = mapVibeSessionDoc(sessionSnap);
+        }
+    }
+
+    return {
+        found: true,
+        registration: match,
+        session,
+        totalMatches: rows.length,
+    };
+});
+
 exports.updateVibeRegistration = onCall(async (request) => {
     assertAuthenticated(request);
     const { registrationId, updates } = request.data || {};

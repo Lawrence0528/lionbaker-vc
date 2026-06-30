@@ -28,6 +28,13 @@ function getLiffIdForCurrentEntry() {
     return LIFF_ID_HOME;
 }
 
+function getDefaultTrialExpiryDate() {
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + 7);
+    expiry.setHours(23, 59, 59, 999);
+    return expiry;
+}
+
 /** 依 LIFF 入口分別 init（同一個 Channel 可有多個 LIFF ID） */
 const liffInitPromiseById = new Map();
 
@@ -75,6 +82,8 @@ export function useLiffVipGate() {
                         role: 'user',
                         status: 'active',
                         agreedToTerms: false,
+                        isSvip: false,
+                        expiryDate: getDefaultTrialExpiryDate(),
                     };
                     await setDoc(userRef, dbData);
                 }
@@ -151,7 +160,7 @@ export function useLiffVipGate() {
                 try {
                     const profile = await liff.getProfile();
                     await handleProfile(profile);
-                } catch (profileErr) {
+                } catch {
                     if (!liff.isInClient()) {
                         liff.login();
                     } else {
