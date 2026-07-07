@@ -4,6 +4,7 @@ import {
     BadgeCheck,
     Bot,
     BrainCircuit,
+    CalendarPlus,
     CheckCircle2,
     ChevronDown,
     CircleDollarSign,
@@ -108,6 +109,87 @@ const formatRefresherPreviousLabel = (s) => {
     return `${title} ｜ ${y}/${m}/${day}（${wk}）`;
 };
 
+const escapeIcsText = (value) => String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n');
+
+const foldIcsLine = (line) => {
+    const chunks = [];
+    let rest = String(line);
+    while (rest.length > 74) {
+        chunks.push(rest.slice(0, 74));
+        rest = ` ${rest.slice(74)}`;
+    }
+    chunks.push(rest);
+    return chunks;
+};
+
+const formatIcsUtcDate = (date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+
+const getTaipeiTimeMinutes = (date) => {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Taipei',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        hourCycle: 'h23',
+    }).formatToParts(date);
+    const get = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+    return get('hour') * 60 + get('minute');
+};
+
+const getSessionCalendarEndDate = (session, startDate) => {
+    const endDate = session?.endDate ? new Date(session.endDate) : null;
+    if (endDate && !Number.isNaN(endDate.getTime()) && endDate.getTime() > startDate.getTime()) return endDate;
+
+    const match = String(session?.endTime || '').match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return new Date(startDate.getTime() + 4 * 60 * 60 * 1000);
+
+    const endMinutes = Number(match[1]) * 60 + Number(match[2]);
+    const startMinutes = getTaipeiTimeMinutes(startDate);
+    let diffMinutes = endMinutes - startMinutes;
+    if (diffMinutes <= 0) diffMinutes += 24 * 60;
+    return new Date(startDate.getTime() + diffMinutes * 60 * 1000);
+};
+
+const buildSessionCalendarFile = (session, attendeeName) => {
+    const startDate = new Date(session?.date);
+    if (!session?.date || Number.isNaN(startDate.getTime())) {
+        throw new Error('missing-session-date');
+    }
+    const endDate = getSessionCalendarEndDate(session, startDate);
+    const title = session.title || 'AI落地師培訓班';
+    const location = [session.location, session.address].filter(Boolean).join(' ');
+    const description = [
+        `報名人：${String(attendeeName || '').trim() || '學員'}`,
+        `課程：${title}`,
+        location ? `地點：${location}` : '',
+        session.note ? `備註：${session.note}` : '',
+        '請依主辦單位通知準時報到。',
+    ].filter(Boolean).join('\n');
+    const uidBase = String(session.id || `${title}-${session.date}`).replace(/[^A-Za-z0-9_-]/g, '');
+    const lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//LionBaker//AI Landing Teacher Signup//ZH-TW',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH',
+        'BEGIN:VEVENT',
+        `UID:${uidBase || 'vibe-session'}-${Date.now()}@lionbaker.com`,
+        `DTSTAMP:${formatIcsUtcDate(new Date())}`,
+        `DTSTART:${formatIcsUtcDate(startDate)}`,
+        `DTEND:${formatIcsUtcDate(endDate)}`,
+        `SUMMARY:${escapeIcsText(title)}`,
+        `LOCATION:${escapeIcsText(location)}`,
+        `DESCRIPTION:${escapeIcsText(description)}`,
+        'END:VEVENT',
+        'END:VCALENDAR',
+    ];
+    return `${lines.flatMap(foldIcsLine).join('\r\n')}\r\n`;
+};
+
 /* ── Scroll-reveal hook ─────────────────────────────────────── */
 const useReveal = (threshold = 0.12) => {
     const ref = useRef(null);
@@ -155,6 +237,7 @@ const Signup = () => {
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState('');
+    const [calendarFeedback, setCalendarFeedback] = useState('');
     const [isLiffLoggedIn, setIsLiffLoggedIn] = useState(false);
     const [lineProfile, setLineProfile] = useState(null);
     const [isVideoMuted, setIsVideoMuted] = useState(true);
@@ -187,25 +270,14 @@ const Signup = () => {
     const [luckyDrawSubmitting, setLuckyDrawSubmitting] = useState(false);
     /** 獨立抽獎送出回饋（不影響課程報名的 error） */
     const [luckyDrawFeedback, setLuckyDrawFeedback] = useState({ tone: '', text: '' });
-    /** 登記成功後由後端回傳的 8 碼折扣碼 */
-    const [luckyDrawDiscountCode, setLuckyDrawDiscountCode] = useState('');
-    const [luckyDrawCodeCopied, setLuckyDrawCodeCopied] = useState(false);
-    /** ISO 字串；折扣碼須於此前（登記日起算 30 日）前使用 */
-    const [luckyDrawDiscountExpiresAt, setLuckyDrawDiscountExpiresAt] = useState('');
+    const [luckyDrawCompleted, setLuckyDrawCompleted] = useState(false);
     /** 後端回傳已登記時為 true，文案改為「您已參加過…」 */
     const [luckyDrawAlreadyRegistered, setLuckyDrawAlreadyRegistered] = useState(false);
     /** 供重寄信：送出當下的 Email／手機（成功後表單可能清空） */
     const [luckyDrawContactLocked, setLuckyDrawContactLocked] = useState(null);
     const [luckyDrawResendBusy, setLuckyDrawResendBusy] = useState(false);
 
-    /** 母親節抽獎折扣碼：正課折抵、帶入聯絡資料、鎖定複訓 */
-    const [courseDiscountInput, setCourseDiscountInput] = useState('');
-    const [courseDiscountVerified, setCourseDiscountVerified] = useState(false);
-    const [courseDiscountLoading, setCourseDiscountLoading] = useState(false);
-    const [courseDiscountError, setCourseDiscountError] = useState('');
-    const [courseDiscountAmountNtd, setCourseDiscountAmountNtd] = useState(100);
-    const [courseLotteryEntryId, setCourseLotteryEntryId] = useState('');
-    const [courseDiscountCodeNormalized, setCourseDiscountCodeNormalized] = useState('');
+    const [sessionCalendarFeedback, setSessionCalendarFeedback] = useState({ sessionId: '', text: '' });
 
     const parallaxOffset = useParallax(0.25);
 
@@ -239,9 +311,57 @@ const Signup = () => {
     const featuredRemaining = featuredSession
         ? Math.max(0, (featuredSession.maxCapacity || 50) - (featuredSession.currentCount || 0))
         : null;
-    const featuredPrice = featuredSession
-        ? Math.max(0, (Number(featuredSession.price) || 0) - (courseDiscountVerified ? courseDiscountAmountNtd : 0))
-        : 3980;
+    const featuredPrice = featuredSession ? (Number(featuredSession.price) || 3980) : 3980;
+
+    const handleAddSessionCalendar = useCallback(async (session, feedbackTarget = 'session') => {
+        const setFeedback = (text) => {
+            if (feedbackTarget === 'success') setCalendarFeedback(text);
+            else setSessionCalendarFeedback({ sessionId: session?.id || '', text });
+        };
+        setFeedback('');
+        if (!session?.date) {
+            setFeedback('此場次沒有明確時間，無法產生行事曆。');
+            return;
+        }
+
+        try {
+            const ics = buildSessionCalendarFile(session, formData.name);
+            const start = new Date(session.date);
+            const fileDate = Number.isNaN(start.getTime())
+                ? 'session'
+                : start.toISOString().slice(0, 10).replace(/-/g, '');
+            const fileName = `lionbaker_ai_course_${fileDate}.ics`;
+            const file = new File([ics], fileName, { type: 'text/calendar;charset=utf-8' });
+
+            if (navigator.canShare?.({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: session.title || 'AI落地師培訓班',
+                        text: '加入 AI落地師培訓班場次到手機行事曆',
+                    });
+                    setFeedback('已開啟分享選單，請選擇手機行事曆或儲存行事曆檔。');
+                    return;
+                } catch (shareErr) {
+                    if (shareErr?.name === 'AbortError') return;
+                }
+            }
+
+            const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            setFeedback('已產生行事曆檔，請在手機上選擇加入行事曆。');
+        } catch (calendarErr) {
+            console.error('add signup calendar', calendarErr);
+            setFeedback('無法產生行事曆，請先截圖保存場次資訊。');
+        }
+    }, [formData.name]);
 
     useEffect(() => {
         if (signupReferralLocked) return;
@@ -375,21 +495,6 @@ const Signup = () => {
     const handlePhoneChange = (e) => { const digits = e.target.value.replace(/\D/g, '').slice(0, 10); setFormData(prev => ({ ...prev, phone: digits })); };
     const handleLuckyDrawPhoneChange = (e) => { setLuckyDrawPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); };
 
-    const formatLuckyDrawExpiryZh = useCallback((iso) => {
-        if (!iso) return '';
-        const ms = Date.parse(iso);
-        const d = new Date(Number.isFinite(ms) ? ms : Date.now());
-        return d.toLocaleString('zh-TW', {
-            timeZone: 'Asia/Taipei',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-        });
-    }, []);
-
     const handleLuckyDrawResendEmail = async () => {
         const email = luckyDrawContactLocked?.email?.trim() || luckyDrawEmail.trim();
         const phone = luckyDrawContactLocked?.phone || luckyDrawPhone;
@@ -455,13 +560,8 @@ const Signup = () => {
                 lineUserId: lineProfile?.userId || '',
             });
 
-            const code = typeof data?.discountCode === 'string' ? data.discountCode.trim() : '';
-            const expIso = typeof data?.discountExpiresAt === 'string' ? data.discountExpiresAt.trim() : '';
-
             setLuckyDrawContactLocked({ email: submittedEmail, phone: submittedPhone });
-            setLuckyDrawDiscountExpiresAt(expIso);
-            setLuckyDrawDiscountCode(code);
-            setLuckyDrawCodeCopied(false);
+            setLuckyDrawCompleted(true);
 
             if (data?.alreadyRegistered) {
                 setLuckyDrawAlreadyRegistered(true);
@@ -479,7 +579,7 @@ const Signup = () => {
             setLuckyDrawAlreadyRegistered(false);
             setLuckyDrawFeedback({
                 tone: 'ok',
-                text: '登記成功！已寄送確認信至您的 Email（含海報與折扣碼）。請務必先完成貼文留言以利抽獎資格認定。',
+                text: '登記成功！已寄送確認信至您的 Email。請務必先完成貼文留言以利抽獎資格認定。',
             });
             setLuckyDrawName('');
             setLuckyDrawEmail('');
@@ -507,69 +607,11 @@ const Signup = () => {
         if (!SHOW_SIGNUP_TIME_NOT_AVAILABLE_OPTION && nextId === 'time_not_available') return;
         setSelectedSessionId(nextId);
         if (nextId === 'time_not_available') {
-            setCourseDiscountInput('');
-            setCourseDiscountVerified(false);
-            setCourseLotteryEntryId('');
-            setCourseDiscountCodeNormalized('');
-            setCourseDiscountError('');
             setFormData(prev => ({ ...prev, isTimeNotAvailable: true, registrationKind: 'main', previousSessionId: '' }));
         } else {
             setFormData(prev => ({ ...prev, isTimeNotAvailable: false, wishTime: '', wishLocation: '', previousSessionId: '' }));
         }
     };
-
-    const clearCourseDiscount = useCallback(() => {
-        setCourseDiscountVerified(false);
-        setCourseLotteryEntryId('');
-        setCourseDiscountCodeNormalized('');
-        setCourseDiscountError('');
-        setCourseDiscountAmountNtd(100);
-    }, []);
-
-    const handleApplyCourseDiscount = async () => {
-        setCourseDiscountError('');
-        const code = String(courseDiscountInput).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (code.length !== 8) {
-            setCourseDiscountError('請輸入 8 碼英數字折扣碼。');
-            return;
-        }
-        setCourseDiscountLoading(true);
-        try {
-            const verifyFn = httpsCallable(functions, 'verifyMothersDayDiscountForCourseSignup');
-            const { data } = await verifyFn({ discountCode: code });
-            if (!data?.ok) {
-                setCourseDiscountError('無法驗證折扣碼。');
-                return;
-            }
-            const amt = Number(data.discountAmountNtd);
-            setCourseDiscountVerified(true);
-            setCourseDiscountAmountNtd(Number.isFinite(amt) && amt > 0 ? amt : 100);
-            setCourseLotteryEntryId(String(data.lotteryEntryId || ''));
-            setCourseDiscountCodeNormalized(String(data.discountCode || code));
-            setFormData((prev) => ({
-                ...prev,
-                registrationKind: 'main',
-                name: String(data.name || '').trim(),
-                phone: String(data.phone || '').replace(/\D/g, '').slice(0, 10),
-                email: String(data.email || '').trim(),
-            }));
-        } catch (err) {
-            console.error('course discount verify', err);
-            setCourseDiscountVerified(false);
-            setCourseLotteryEntryId('');
-            setCourseDiscountCodeNormalized('');
-            const msg = typeof err?.message === 'string' ? err.message.trim() : '';
-            setCourseDiscountError(msg || '查無有效折扣碼或已失效。');
-        } finally {
-            setCourseDiscountLoading(false);
-        }
-    };
-
-    const computeMainPriceAfterDiscount = useCallback((listPrice) => {
-        const n = Number(listPrice) || 0;
-        if (!courseDiscountVerified) return n;
-        return Math.max(0, n - courseDiscountAmountNtd);
-    }, [courseDiscountVerified, courseDiscountAmountNtd]);
 
     const handleSubmit = async (e) => {
         e.preventDefault(); setError('');
@@ -600,10 +642,6 @@ const Signup = () => {
             if (String(formData.previousSessionId) === String(selectedSessionId)) { setError('曾參加之場次不可與本場次相同。'); return; }
         }
         if (isMain) { if (formData.lastFive.length !== 5) { setError('匯款後五碼必須為 5 碼'); return; } }
-        if (courseDiscountVerified && (formData.isTimeNotAvailable || !isMain)) {
-            setError('母親節折扣碼僅適用正課報名，請移除折扣或改選一般場次。');
-            return;
-        }
         setLoading(true);
         try {
             const checkDup = httpsCallable(functions, 'checkVibeRegistrationDuplicate');
@@ -615,7 +653,7 @@ const Signup = () => {
                 ? 0
                 : isRefresher
                   ? REFRESHER_FEE
-                  : computeMainPriceAfterDiscount(listPriceNtd);
+                  : listPriceNtd;
             const previousSession = isRefresher ? closedSessionsForRefresher.find((s) => s.id === formData.previousSessionId) || null : null;
             const sessionInfo = {
                 sessionId: selectedSessionId,
@@ -658,8 +696,8 @@ const Signup = () => {
                 ...sessionInfo,
             };
             const discountExtra = {
-                mothersDayDiscountCode: isMain && courseDiscountVerified ? courseDiscountCodeNormalized : null,
-                mothersDayDiscountAmountNtd: isMain && courseDiscountVerified ? courseDiscountAmountNtd : null,
+                mothersDayDiscountCode: null,
+                mothersDayDiscountAmountNtd: null,
                 sessionListPriceNtd: isMain ? listPriceNtd : null,
             };
 
@@ -696,24 +734,6 @@ const Signup = () => {
                 });
             }
 
-            if (!formData.isTimeNotAvailable && isMain && courseDiscountVerified && courseLotteryEntryId && courseDiscountCodeNormalized) {
-                try {
-                    const redeemFn = httpsCallable(functions, 'redeemMothersDayCourseDiscount');
-                    await redeemFn({
-                        lotteryEntryId: courseLotteryEntryId,
-                        registrationId: docRef.id,
-                        discountCode: courseDiscountCodeNormalized,
-                        email: formData.email.trim(),
-                        phone: formData.phone,
-                        sessionListPrice: listPriceNtd,
-                    });
-                } catch (redeemErr) {
-                    console.error('redeem mothers day discount', redeemErr);
-                    setError('報名已送出，但折扣碼未能完成核銷；請勿重複報名，並請截圖聯絡主辦確認應繳金額。');
-                    return;
-                }
-            }
-
             try {
                 const mailFn = httpsCallable(functions, 'sendVibeCourseRegistrationConfirmationEmail');
                 await mailFn({ registrationId: docRef.id });
@@ -722,9 +742,7 @@ const Signup = () => {
             }
 
             if (isLiffLoggedIn && liff.isInClient()) {
-                const feeLine = !formData.isTimeNotAvailable && isMain && courseDiscountVerified
-                    ? `\n應繳費用：${expectedMainFee.toLocaleString()} 元（已套用母親節折扣）`
-                    : (!formData.isTimeNotAvailable && isMain ? `\n應繳費用：${expectedMainFee.toLocaleString()} 元` : '');
+                const feeLine = !formData.isTimeNotAvailable && isMain ? `\n應繳費用：${expectedMainFee.toLocaleString()} 元` : '';
                 const methodText = formData.isTimeNotAvailable ? '' : (isRefresher ? `\n報名類型：複訓（${REFRESHER_FEE} 元現場繳費）\n前次參加：${formatRefresherPreviousLabel(previousSession) || previousSession?.title || '-'}` : `\n匯款後五碼：${formData.lastFive}`);
                 const sessionText = formData.isTimeNotAvailable ? `以上場次時間無法配合\n許願時間：${formData.wishTime}\n許願地點：${formData.wishLocation}` : (selectedSession?.displayDate || '2026/02/08');
                 const kindLine = !formData.isTimeNotAvailable && isMain ? '\n報名類型：正課' : '';
@@ -751,6 +769,29 @@ const Signup = () => {
                         我們已收到您的報名資訊。<br />
                         {isLiffLoggedIn && liff.isInClient() && <span className="text-sm text-emerald-400">確認訊息已發送至您的 LINE 聊天室</span>}
                     </p>
+                    {!formData.isTimeNotAvailable && selectedSessionObj?.date && (
+                        <div className="mb-5 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4 text-left">
+                            <p className="text-xs font-bold tracking-[.18em] text-sky-300">COURSE TIME</p>
+                            <p className="mt-1 text-sm font-bold text-white">{selectedSessionObj.title || 'AI落地師培訓班'}</p>
+                            <p className="mt-1 text-sm text-zinc-300">{selectedSessionObj.displayDate || selectedSessionObj.date}</p>
+                            {(selectedSessionObj.location || selectedSessionObj.address) && (
+                                <p className="mt-1 text-xs text-zinc-500">
+                                    {[selectedSessionObj.location, selectedSessionObj.address].filter(Boolean).join(' ')}
+                                </p>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => handleAddSessionCalendar(selectedSessionObj, 'success')}
+                                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 text-sm font-black text-white transition-colors hover:bg-sky-400"
+                            >
+                                <CalendarPlus className="h-5 w-5" />
+                                加入手機行事曆
+                            </button>
+                            {calendarFeedback && (
+                                <p className="mt-2 text-xs leading-relaxed text-sky-200">{calendarFeedback}</p>
+                            )}
+                        </div>
+                    )}
                     <button type="button" onClick={() => window.location.reload()} className="w-full bg-white text-black font-bold py-3.5 rounded-2xl hover:bg-zinc-100 transition-colors mb-3">繼續報名</button>
                     {isLiffLoggedIn && liff.isInClient() && (
                         <button type="button" onClick={() => liff.closeWindow()} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white py-3.5 rounded-2xl transition-colors">關閉視窗</button>
@@ -1010,7 +1051,7 @@ const Signup = () => {
                                                 </p>
                                             </div>
 
-                                            {!luckyDrawDiscountCode ? (
+                                            {!luckyDrawCompleted ? (
                                                 <div className="flex flex-col gap-4">
                                                     <div>
                                                         <label className="block text-sm font-semibold text-zinc-200 mb-1.5">抽獎聯絡姓名 <span className="text-[#ff4d6d]">*</span></label>
@@ -1064,41 +1105,13 @@ const Signup = () => {
                                                     {luckyDrawFeedback.text}
                                                 </div>
                                             ) : null}
-                                            {luckyDrawDiscountCode ? (
+                                            {luckyDrawCompleted ? (
                                                 <div className="rounded-2xl border border-[#d4af37]/55 bg-[#422006]/25 px-4 py-4 flex flex-col gap-3">
-                                                    <p className="text-xs font-bold text-[#fde047] tracking-wider">
-                                                        {luckyDrawAlreadyRegistered ? '您的登記折扣碼' : '您的專屬折扣碼'}
+                                                    <p className="text-sm font-bold text-[#fde047]">
+                                                        {luckyDrawAlreadyRegistered ? '您已完成過抽獎登記' : '抽獎登記已完成'}
                                                     </p>
-                                                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                                                        <p className="flex-1 font-mono text-2xl sm:text-[1.65rem] font-black tracking-[0.2em] text-white text-center sm:text-left break-all">
-                                                            {luckyDrawDiscountCode}
-                                                        </p>
-                                                        <button
-                                                            type="button"
-                                                            onClick={async () => {
-                                                                try {
-                                                                    await navigator.clipboard.writeText(luckyDrawDiscountCode);
-                                                                    setLuckyDrawCodeCopied(true);
-                                                                    window.setTimeout(() => setLuckyDrawCodeCopied(false), 2200);
-                                                                } catch {
-                                                                    setLuckyDrawCodeCopied(false);
-                                                                }
-                                                            }}
-                                                            className="shrink-0 rounded-xl border border-[#ff4d6d]/45 bg-[#ff4d6d]/15 hover:bg-[#ff4d6d]/25 text-[#fda4af] font-bold text-sm px-5 py-3 transition-colors"
-                                                        >
-                                                            {luckyDrawCodeCopied ? '已複製' : '複製折扣碼'}
-                                                        </button>
-                                                    </div>
-                                                    {luckyDrawDiscountExpiresAt ? (
-                                                        <p className="text-xs text-[#fde68a]/95 leading-relaxed">
-                                                            <span className="font-semibold text-white">使用期限：</span>
-                                                            {formatLuckyDrawExpiryZh(luckyDrawDiscountExpiresAt)} 前（登記日起算 30 日內須使用）
-                                                        </p>
-                                                    ) : null}
-                                                    <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                                        {luckyDrawAlreadyRegistered
-                                                            ? '此為您先前登記所核發之折扣碼。如需確認信可點選下方重寄。'
-                                                            : '請保存此碼；確認信已寄至您登記的 Email。'}
+                                                    <p className="text-xs text-zinc-400 leading-relaxed">
+                                                        確認信已寄至登記 Email。貼文留言仍為抽獎資格必要條件，請依活動貼文說明完成留言。
                                                     </p>
                                                     <button
                                                         type="button"
@@ -1112,10 +1125,10 @@ const Signup = () => {
                                             ) : null}
                                             <button
                                                 type="submit"
-                                                disabled={luckyDrawSubmitting || !!luckyDrawDiscountCode}
+                                                disabled={luckyDrawSubmitting || luckyDrawCompleted}
                                                 className="w-full rounded-2xl bg-gradient-to-r from-[#7f1d1d] to-[#991b1b] hover:from-[#991b1b] hover:to-[#b91c1c] border border-[#5c1313]/80 text-white font-black text-base py-3.5 shadow-lg shadow-[#450a0a]/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                             >
-                                                {luckyDrawSubmitting ? '送出中…' : luckyDrawDiscountCode ? '已完成登記' : '登記抽獎'}
+                                                {luckyDrawSubmitting ? '送出中…' : luckyDrawCompleted ? '已完成登記' : '登記抽獎'}
                                             </button>
                                         </form>
                                     </article>
@@ -1228,51 +1241,6 @@ const Signup = () => {
 
                                     <form onSubmit={handleSubmit} className="p-5 sm:p-6 flex flex-col gap-5">
 
-                                        {/* 母親節抽獎折扣碼（正課折抵；套用後鎖定複訓並帶入聯絡資料） */}
-                                        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4">
-                                            <label className="block text-sm font-bold text-emerald-300 mb-2">母親節活動折扣碼（選填）</label>
-                                            <p className="text-xs text-zinc-500 mb-3 leading-relaxed">
-                                                若您已完成母親節抽獎登記並取得折扣碼，請輸入後按「套用」。將折抵正課費用並自動帶入姓名／手機／Email；<strong className="text-zinc-400">限正課</strong>，複訓將無法選取。
-                                            </p>
-                                            <div className="flex flex-col sm:flex-row gap-2">
-                                                <input
-                                                    type="text"
-                                                    value={courseDiscountInput}
-                                                    onChange={(e) => setCourseDiscountInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
-                                                    placeholder="8 碼英數字"
-                                                    autoComplete="off"
-                                                    className="flex-1 px-4 py-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white placeholder-zinc-600 font-mono tracking-wider focus:border-emerald-500/50 outline-none text-sm"
-                                                />
-                                                <div className="flex gap-2 shrink-0">
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleApplyCourseDiscount}
-                                                        disabled={courseDiscountLoading}
-                                                        className="rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-3 text-sm disabled:opacity-50"
-                                                    >
-                                                        {courseDiscountLoading ? '驗證中…' : '套用'}
-                                                    </button>
-                                                    {courseDiscountVerified ? (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => { clearCourseDiscount(); setCourseDiscountInput(''); }}
-                                                            className="rounded-xl border border-zinc-600 text-zinc-300 font-semibold px-4 py-3 text-sm hover:bg-zinc-800"
-                                                        >
-                                                            移除
-                                                        </button>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-                                            {courseDiscountError ? (
-                                                <p className="mt-2 text-xs text-rose-400">{courseDiscountError}</p>
-                                            ) : null}
-                                            {courseDiscountVerified ? (
-                                                <p className="mt-2 text-xs text-emerald-400/90">
-                                                    已套用：正課折抵 {courseDiscountAmountNtd.toLocaleString()} 元（場次列表已顯示折後價）。
-                                                </p>
-                                            ) : null}
-                                        </div>
-
                                         {/* Session Selection */}
                                         <div>
                                             <label className="block text-sm font-semibold text-zinc-300 mb-3">選擇場次 <span className="text-rose-400">*</span></label>
@@ -1309,12 +1277,9 @@ const Signup = () => {
                                                                     </div>
                                                                     <div className="flex justify-between items-end">
                                                                         <div className="flex items-baseline gap-2 flex-wrap">
-                                                                            <span className={`text-xl font-black ${courseDiscountVerified ? 'text-emerald-400' : 'text-sky-400'}`}>
-                                                                                ${computeMainPriceAfterDiscount(session.price).toLocaleString()}
+                                                                            <span className="text-xl font-black text-sky-400">
+                                                                                ${Number(session.price || 0).toLocaleString()}
                                                                             </span>
-                                                                            {courseDiscountVerified && (
-                                                                                <span className="text-sm text-zinc-500 line-through">${Number(session.price || 0).toLocaleString()}</span>
-                                                                            )}
                                                                             {!!session.originalPrice && <span className="text-xs text-zinc-600 line-through">原價 ${session.originalPrice?.toLocaleString()}</span>}
                                                                         </div>
                                                                         <div className="text-xs text-zinc-600">{isFull ? <span className="text-amber-400">已額滿，報名排備取</span> : `正課名額：剩 ${(session.maxCapacity || 50) - (session.currentCount || 0)} 位`}</div>
@@ -1326,6 +1291,24 @@ const Signup = () => {
                                                                         </div>
                                                                         <div className="text-xs text-zinc-600">{isRefresherFull ? <span className="text-amber-400">複訓額滿，可排備取</span> : `複訓可收：剩 ${rMax - rCount} / ${rMax} 人`}</div>
                                                                     </div>
+                                                                    {isSelected && (
+                                                                        <div className="mt-3">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    handleAddSessionCalendar(session);
+                                                                                }}
+                                                                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-2.5 text-sm font-bold text-sky-200 transition-colors hover:bg-sky-500/15 sm:w-auto"
+                                                                            >
+                                                                                <CalendarPlus className="h-4 w-4" />
+                                                                                加入行事曆
+                                                                            </button>
+                                                                            {sessionCalendarFeedback.sessionId === session.id && sessionCalendarFeedback.text ? (
+                                                                                <p className="mt-2 text-xs leading-relaxed text-sky-200">{sessionCalendarFeedback.text}</p>
+                                                                            ) : null}
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             </div>
                                                         );
@@ -1355,17 +1338,14 @@ const Signup = () => {
                                             <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
                                                 <p className="text-sm font-bold text-zinc-300 mb-3">報名類型 <span className="text-rose-400">*</span></p>
                                                 <div className="flex flex-col gap-2">
-                                                    <label className={`flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 has-[:checked]:border-sky-500/50 has-[:checked]:bg-sky-500/5 transition-colors ${courseDiscountVerified ? 'ring-1 ring-emerald-500/30' : ''}`}>
+                                                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 has-[:checked]:border-sky-500/50 has-[:checked]:bg-sky-500/5 transition-colors">
                                                         <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" checked={formData.registrationKind === 'main'} onChange={() => setFormData(prev => ({ ...prev, registrationKind: 'main' }))} />
                                                         <span><span className="block font-bold text-white text-sm">正課</span><span className="block text-xs text-zinc-500 mt-0.5">匯款報名，依本場次公告金額繳交。</span></span>
                                                     </label>
-                                                    <label className={`flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-3 transition-colors ${courseDiscountVerified ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'cursor-pointer has-[:checked]:border-emerald-500/50 has-[:checked]:bg-emerald-500/5'}`}>
-                                                        <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" disabled={courseDiscountVerified} checked={formData.registrationKind === 'refresher'} onChange={() => setFormData((prev) => ({ ...prev, registrationKind: 'refresher', invoiceType: 'general', taxId: '' }))} />
+                                                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900 p-3 transition-colors has-[:checked]:border-emerald-500/50 has-[:checked]:bg-emerald-500/5">
+                                                        <input type="radio" name="registrationKind" className="mt-1 h-4 w-4" checked={formData.registrationKind === 'refresher'} onChange={() => setFormData((prev) => ({ ...prev, registrationKind: 'refresher', invoiceType: 'general', taxId: '' }))} />
                                                         <span><span className="block font-bold text-white text-sm">複訓</span><span className="block text-xs text-zinc-500 mt-0.5">費用 {REFRESHER_FEE} 元、當天現場繳交。本場次可收 {selectedRefresherMax} 人。</span></span>
                                                     </label>
-                                                    {courseDiscountVerified ? (
-                                                        <p className="text-xs text-amber-400/90">已套用母親節折扣，僅能選擇正課。</p>
-                                                    ) : null}
                                                 </div>
                                                 {formData.registrationKind === 'refresher' && (
                                                     <div className="mt-4">

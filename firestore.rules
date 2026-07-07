@@ -48,6 +48,19 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 全域系統設定：目前用於首頁金鑰驗證開關
+    match /system_settings/{settingId} {
+      allow read: if request.auth != null
+        && settingId == 'license_gate';
+      allow create, update: if request.auth != null
+        && settingId == 'license_gate'
+        && request.resource.data.keys().hasOnly(['licenseVerificationEnabled', 'updatedAt', 'updatedBy'])
+        && request.resource.data.licenseVerificationEnabled is bool
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy is string;
+      allow delete: if false;
+    }
+
     // 培訓班報名：表單送出未強制 Firebase 登入；報到頁僅單筆 get
     match /registrations_vibe/{regId} {
       allow get: if true;

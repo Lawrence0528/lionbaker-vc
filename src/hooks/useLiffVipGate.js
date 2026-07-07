@@ -21,6 +21,9 @@ export const LIFF_ID_REELS = '2008893070-IXsuDcqR';
 
 /** 舊程式相容：等同首頁 LIFF */
 export const LIFF_ID = LIFF_ID_HOME;
+const LICENSE_GATE_SETTINGS_COLLECTION = 'system_settings';
+const LICENSE_GATE_SETTINGS_DOC = 'license_gate';
+const DEFAULT_LICENSE_VERIFICATION_ENABLED = true;
 
 function getLiffIdForCurrentEntry() {
     const p = typeof window !== 'undefined' ? window.location.pathname || '/' : '/';
@@ -51,6 +54,17 @@ function getLiffInitPromise(liffId) {
     return liffInitPromiseById.get(liffId);
 }
 
+async function fetchLicenseVerificationEnabled() {
+    try {
+        const snap = await getDoc(doc(db, LICENSE_GATE_SETTINGS_COLLECTION, LICENSE_GATE_SETTINGS_DOC));
+        if (!snap.exists()) return DEFAULT_LICENSE_VERIFICATION_ENABLED;
+        return snap.data()?.licenseVerificationEnabled !== false;
+    } catch (err) {
+        console.warn('License gate settings unavailable, fallback to verification enabled:', err);
+        return DEFAULT_LICENSE_VERIFICATION_ENABLED;
+    }
+}
+
 /**
  * LIFF 初始化、Firestore 使用者同步，以及與首頁相同的 VIP／條款／別名／序號兌換流程。
  * 儲值（序號兌換）邏輯集中於此，與 UI 組件 {@link ActivationScreen} 分離。
@@ -63,9 +77,10 @@ export function useLiffVipGate() {
     const [needsActivation, setNeedsActivation] = useState(false);
     const [isExpired, setIsExpired] = useState(false);
     const [isBanned, setIsBanned] = useState(false);
+    const [licenseVerificationEnabled, setLicenseVerificationEnabled] = useState(DEFAULT_LICENSE_VERIFICATION_ENABLED);
 
     useEffect(() => {
-        const handleProfile = async (profile) => {
+        const handleProfile = async (profile, verificationEnabled) => {
             if (!profile) return;
             try {
                 const userRef = doc(db, 'users', profile.userId);
@@ -90,6 +105,7 @@ export function useLiffVipGate() {
 
                 const currentUser = { ...profile, ...dbData };
                 setUserProfile(currentUser);
+                setLicenseVerificationEnabled(verificationEnabled);
 
                 if (currentUser.status === 'banned') {
                     setIsBanned(true);
@@ -103,7 +119,7 @@ export function useLiffVipGate() {
                     setNeedsAlias(true);
                     return;
                 }
-                if (!currentUser.isSvip) {
+                if (verificationEnabled && !currentUser.isSvip) {
                     if (!currentUser.expiryDate) {
                         setNeedsActivation(true);
                     } else {
@@ -112,6 +128,9 @@ export function useLiffVipGate() {
                             : new Date(currentUser.expiryDate);
                         if (new Date() > exp) setIsExpired(true);
                     }
+                } else {
+                    setNeedsActivation(false);
+                    setIsExpired(false);
                 }
             } catch (e) {
                 console.error('User Sync Error', e);
@@ -138,28 +157,31 @@ export function useLiffVipGate() {
         };
 
         const init = async () => {
+            let firebaseAuthReady = false;
+            try {
+                await signIn();
+                firebaseAuthReady = true;
+            } catch (e) {
+                console.error('Firebase 登入失敗', e);
+            }
+
+            const verificationEnabled = await fetchLicenseVerificationEnabled();
+
             if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                try {
-                    await signIn();
-                } catch (e) {
-                    console.error('Firebase 登入失敗', e);
-                }
                 handleProfile({
                     userId: 'Ue17ac074742b4f21da6f6b41307a246a',
                     displayName: 'Local User',
                     pictureUrl: 'https://placehold.co/150',
-                });
+                }, verificationEnabled);
                 return;
             }
 
             try {
-                signIn()
-                    .then(() => console.log('Firebase Auth OK'))
-                    .catch((err) => console.error('Firebase 登入失敗（非致命）:', err));
+                if (firebaseAuthReady) console.log('Firebase Auth OK');
                 await initLiffWithRetry();
                 try {
                     const profile = await liff.getProfile();
-                    await handleProfile(profile);
+                    await handleProfile(profile, verificationEnabled);
                 } catch {
                     if (!liff.isInClient()) {
                         liff.login();
@@ -187,7 +209,7 @@ export function useLiffVipGate() {
             setUserProfile((prev) => ({ ...prev, agreedToTerms: true }));
             setNeedsTerms(false);
             if (!userProfile.alias) setNeedsAlias(true);
-            else if (!userProfile.isSvip && !userProfile.expiryDate) setNeedsActivation(true);
+            else if (licenseVerificationEnabled && !userProfile.isSvip && !userProfile.expiryDate) setNeedsActivation(true);
         } catch (e) {
             console.error('Agree terms failed:', e);
             alert('操作失敗，請重試');
@@ -201,7 +223,7 @@ export function useLiffVipGate() {
         await updateDoc(doc(db, 'users', userProfile.userId), { alias: newAlias });
         setUserProfile((prev) => ({ ...prev, alias: newAlias }));
         setNeedsAlias(false);
-        if (!userProfile.isSvip && !userProfile.expiryDate) setNeedsActivation(true);
+        if (licenseVerificationEnabled && !userProfile.isSvip && !userProfile.expiryDate) setNeedsActivation(true);
     };
 
     const handleRedeemCode = async (code) => {
@@ -272,6 +294,7 @@ export function useLiffVipGate() {
         needsActivation,
         isBanned,
         isExpired,
+        licenseVerificationEnabled,
         setIsExpired,
         handleAgreeTerms,
         handleSetAlias,

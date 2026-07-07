@@ -107,7 +107,16 @@
 
 ---
 
-### 2.6 `registrations_vibe`
+### 2.6 `system_settings/license_gate`
+
+**用途**：全域金鑰 gate 設定，由超管後台控制課堂模式。
+
+**常見欄位**：  
+`licenseVerificationEnabled`（`false` 時首頁略過 VIP／到期金鑰驗證）, `updatedAt`, `updatedBy`
+
+---
+
+### 2.7 `registrations_vibe`
 
 **用途**：培訓班線上報名（表單可直接寫入，受 rules 限制）。
 
@@ -118,12 +127,14 @@
 
 ---
 
-### 2.7 `vibe_sessions`（僅後端）
+### 2.8 `vibe_sessions`（僅後端）
 
 **用途**：場次 CRUD；客戶端不可直接讀寫。
 
 **Callable  payload 典型欄位**（`createVibeSession` 等）：  
-`title`, `date`, `endDate`, `endTime`, `location`, `address`, `note`, `status`, `price`, `originalPrice`, `maxCapacity`, `currentCount`, `createdAt`, `updatedAt`
+`title`, `date`, `endDate`, `endTime`, `location`, `address`, `note`, `status`, `isSignupOpen`, `price`, `originalPrice`, `maxCapacity`, `currentCount`, `refresherMaxCapacity`, `refresherCurrentCount`, `createdAt`, `updatedAt`
+
+**後台複製場次**：只會用既有場次建立新的 `vibe_sessions` 草稿，複製課程設定（時間、地點、價格、名額、備註等），不複製 `registrations_vibe` 名單；新場次的 `currentCount`、`refresherCurrentCount` 皆歸零。
 
 ---
 

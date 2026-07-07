@@ -582,11 +582,6 @@ function formatMothersDayDiscountExpiryZhTWFromIso(isoOrMillis) {
  * 依 Firestore 登記文件寄送母親節抽獎確認／重寄信（variant：resend | already_registered）。
  */
 async function sendMothersDayLuckyDrawEmailFromDocData(resendApiKeyVal, d, emailDisp, phoneNorm, variant) {
-    const discountCode = String(d.discountCode || "");
-    if (!discountCode) {
-        return;
-    }
-    const discountExpiresAtIso = discountExpiresIsoFromDoc(d);
     const origin = vibePublicOrigin.value().replace(/\/$/, "");
     const from = resendFromEmail.value();
     const isResend = variant === "resend";
@@ -599,17 +594,15 @@ async function sendMothersDayLuckyDrawEmailFromDocData(resendApiKeyVal, d, email
         referrerSnapshot: String(d.referrerSnapshot || "").trim().slice(0, 80),
         prizeSummary: String(d.prizeSummary || ""),
         drawAnnouncementNote: String(d.drawAnnouncementNote || ""),
-        discountCode,
-        discountExpiryLabel: formatMothersDayDiscountExpiryZhTWFromIso(discountExpiresAtIso),
         emailHeadline: isResend ? "確認信重寄" : "您已登記母親節抽獎",
         emailBadgeLabel: isResend ? "母親節限定｜抽獎確認信" : "母親節限定｜抽獎登記提醒",
         emailLeadParagraph: isResend
-            ? "您申請重寄本信。以下為您先前登記的抽獎資料與專屬折扣碼（折扣碼限登記日起 30 日內使用）。"
-            : "您先前已完成抽獎登記。以下再次附上折扣碼與登記摘要（折扣碼限登記日起 30 日內使用）。",
+            ? "您申請重寄本信。以下為您先前登記的抽獎資料。"
+            : "您先前已完成抽獎登記。以下再次附上登記摘要。",
     });
     const subject = isResend
-        ? `【母親節抽獎】確認信重寄｜您的專屬折扣碼 ${discountCode}`
-        : `【母親節抽獎】登記紀錄提醒｜您的專屬折扣碼 ${discountCode}`;
+        ? "【母親節抽獎】確認信重寄"
+        : "【母親節抽獎】登記紀錄提醒";
     const resend = new Resend(resendApiKeyVal);
     const { error } = await resend.emails.send({
         from,
@@ -757,8 +750,7 @@ exports.checkVibeRegistrationDuplicate = onCall(async (request) => {
 /**
  * 母親節抽獎：每人限乙次；同一 Campaign 下同手機或同 Email（不分大小寫）即視為重複，
  * 不論來自哪一組推薦碼。以交易寫入本體紀錄 + 去鎖鑰以避免並發。
- * 成功後系統產生 8 碼英數字折扣碼、寄送確認信（含海報圖與登記資料）。
- * 折扣碼於登記日起 30 日內有效（discountExpiresAt）。
+ * 成功後寄送確認信（含海報圖與登記資料）。
  * 若已登記：回傳 alreadyRegistered（不拋錯），並可透過 resendMothersDay2026LuckyDrawEmail 重寄信。
  */
 exports.submitMothersDay2026LuckyDrawEntry = onCall(
@@ -798,8 +790,7 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
 
         const existingEarly = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
         if (existingEarly) {
-            const snap = await ensureMothersDayEntryDiscountAndExpiry(existingEarly);
-            const d = snap.data() || {};
+            const d = existingEarly.data() || {};
             try {
                 await sendMothersDayLuckyDrawEmailFromDocData(
                     resendApiKey.value(),
@@ -814,8 +805,6 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
             return {
                 ok: false,
                 alreadyRegistered: true,
-                discountCode: String(d.discountCode || ""),
-                discountExpiresAt: discountExpiresIsoFromDoc(d),
                 message: "您已參加過母親節抽獎活動",
             };
         }
@@ -833,95 +822,68 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
         };
 
         let entryId = "";
-        let discountCode = "";
-        const registeredAtApproxMs = Date.now();
 
         /** 不在 transaction 回呼內拋 HttpsError（避免部分環境吞錯） */
         try {
-            const maxDiscountAttempts = 16;
-            let committed = false;
-            for (let attempt = 0; attempt < maxDiscountAttempts && !committed; attempt++) {
-                const candidateCode = randomAlphanumericDiscountCode8();
-                const entryRef = entriesCol.doc();
-                const eid = entryRef.id;
-                const discountLockRef = dedupeCol.doc(`${MOTHERS_DAY_2026_CAMPAIGN_ID}__discount__${candidateCode}`);
+            const entryRef = entriesCol.doc();
+            const eid = entryRef.id;
+            const payload = {
+                campaign: MOTHERS_DAY_2026_CAMPAIGN_ID,
+                name,
+                email: emailDisp,
+                emailNormalized: emailNorm,
+                phone: phoneNorm,
+                referralCode,
+                referrerSnapshot,
+                prizeSummary,
+                drawAnnouncementNote,
+                commentOnPostRequired: raw.commentOnPostRequired !== false,
+                lineUserId: lineUserIdOut,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                status: "submitted",
+            };
 
-                const payload = {
-                    campaign: MOTHERS_DAY_2026_CAMPAIGN_ID,
-                    name,
-                    email: emailDisp,
-                    emailNormalized: emailNorm,
-                    phone: phoneNorm,
-                    referralCode,
-                    referrerSnapshot,
-                    prizeSummary,
-                    drawAnnouncementNote,
-                    commentOnPostRequired: raw.commentOnPostRequired !== false,
-                    lineUserId: lineUserIdOut,
-                    discountCode: candidateCode,
-                    discountExpiresAt: mothersDayDiscountExpiresAtFromRegistration(registeredAtApproxMs),
-                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                    status: "submitted",
-                };
+            const lockFields = { ...lockFieldsBase, entryId: eid };
 
-                const lockFields = { ...lockFieldsBase, entryId: eid };
-
-                const txOutcome = await db.runTransaction(async (tx) => {
-                    const [lsP, lsE, lsD] = await Promise.all([
-                        tx.get(lockPhoneRef),
-                        tx.get(lockEmailRef),
-                        tx.get(discountLockRef),
-                    ]);
-                    if (lsP.exists || lsE.exists) {
-                        return "duplicate_lock";
-                    }
-                    if (lsD.exists) {
-                        return "discount_collision";
-                    }
-                    tx.set(lockPhoneRef, { ...lockFields, phone: phoneNorm });
-                    tx.set(lockEmailRef, { ...lockFields, emailNormalized: emailNorm });
-                    tx.set(discountLockRef, { ...lockFields, discountCode: candidateCode });
-                    tx.set(entryRef, payload);
-                    return "ok";
-                });
-
-                if (txOutcome === "duplicate_lock") {
-                    const ex = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
-                    if (ex) {
-                        const snap = await ensureMothersDayEntryDiscountAndExpiry(ex);
-                        const d = snap.data() || {};
-                        try {
-                            await sendMothersDayLuckyDrawEmailFromDocData(
-                                resendApiKey.value(),
-                                d,
-                                emailDisp,
-                                phoneNorm,
-                                "already_registered"
-                            );
-                        } catch (mailErr) {
-                            console.error("submitMothersDay2026LuckyDrawEntry duplicateLock email", mailErr);
-                        }
-                        return {
-                            ok: false,
-                            alreadyRegistered: true,
-                            discountCode: String(d.discountCode || ""),
-                            discountExpiresAt: discountExpiresIsoFromDoc(d),
-                            message: "您已參加過母親節抽獎活動",
-                        };
-                    }
-                    throw new HttpsError("already-exists", dupMsg);
+            const txOutcome = await db.runTransaction(async (tx) => {
+                const [lsP, lsE] = await Promise.all([
+                    tx.get(lockPhoneRef),
+                    tx.get(lockEmailRef),
+                ]);
+                if (lsP.exists || lsE.exists) {
+                    return "duplicate_lock";
                 }
-                if (txOutcome === "discount_collision") {
-                    continue;
+                tx.set(lockPhoneRef, { ...lockFields, phone: phoneNorm });
+                tx.set(lockEmailRef, { ...lockFields, emailNormalized: emailNorm });
+                tx.set(entryRef, payload);
+                return "ok";
+            });
+
+            if (txOutcome === "duplicate_lock") {
+                const ex = await findExistingMothersDay2026Entry(phoneNorm, emailNorm);
+                if (ex) {
+                    const d = ex.data() || {};
+                    try {
+                        await sendMothersDayLuckyDrawEmailFromDocData(
+                            resendApiKey.value(),
+                            d,
+                            emailDisp,
+                            phoneNorm,
+                            "already_registered"
+                        );
+                    } catch (mailErr) {
+                        console.error("submitMothersDay2026LuckyDrawEntry duplicateLock email", mailErr);
+                    }
+                    return {
+                        ok: false,
+                        alreadyRegistered: true,
+                        message: "您已參加過母親節抽獎活動",
+                    };
                 }
-                if (txOutcome === "ok") {
-                    entryId = eid;
-                    discountCode = candidateCode;
-                    committed = true;
-                }
+                throw new HttpsError("already-exists", dupMsg);
             }
-            if (!committed || !discountCode) {
-                throw new HttpsError("unknown", "系統忙碌，請稍後再試。");
+            if (txOutcome === "ok") {
+                entryId = eid;
             }
         } catch (e) {
             if (e instanceof HttpsError) {
@@ -931,9 +893,6 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
             throw new HttpsError("unknown", "系統忙碌，請稍後再試。");
         }
 
-        const discountExpiresAtIso = new Date(
-            registeredAtApproxMs + MOTHERS_DAY_DISCOUNT_VALID_MS
-        ).toISOString();
         const origin = vibePublicOrigin.value().replace(/\/$/, "");
         const from = resendFromEmail.value();
         const html = buildMothersDayLuckyDrawConfirmationEmailHtml({
@@ -945,12 +904,10 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
             referrerSnapshot,
             prizeSummary,
             drawAnnouncementNote,
-            discountCode,
-            discountExpiryLabel: formatMothersDayDiscountExpiryZhTWFromIso(discountExpiresAtIso),
             emailHeadline: "登記已成功",
             emailBadgeLabel: "母親節限定｜抽獎登記成功",
         });
-        const subject = `【母親節抽獎】登記成功｜您的專屬折扣碼 ${discountCode}`;
+        const subject = "【母親節抽獎】登記成功";
 
         try {
             const resend = new Resend(resendApiKey.value());
@@ -970,14 +927,12 @@ exports.submitMothersDay2026LuckyDrawEntry = onCall(
         return {
             ok: true,
             id: entryId,
-            discountCode,
-            discountExpiresAt: discountExpiresAtIso,
         };
     }
 );
 
 /**
- * 公開：依登記時相同的手機 + Email 重寄母親節抽獎確認信（含海報與折扣碼）。
+ * 公開：依登記時相同的手機 + Email 重寄母親節抽獎確認信（含海報與登記資料）。
  */
 exports.resendMothersDay2026LuckyDrawEmail = onCall(
     { secrets: [resendApiKey] },
@@ -1002,20 +957,12 @@ exports.resendMothersDay2026LuckyDrawEmail = onCall(
             );
         }
 
-        const snap = await ensureMothersDayEntryDiscountAndExpiry(doc);
-        const d = snap.data() || {};
+        const d = doc.data() || {};
         const pNorm = String(d.phone || "").replace(/\D/g, "");
         const em = String(d.email || "").trim().toLowerCase();
         if (pNorm !== phoneNorm || em !== emailNorm) {
             throw new HttpsError("permission-denied", "手機或 Email 與登記資料不符。");
         }
-
-        const discountCode = String(d.discountCode || "");
-        if (!discountCode) {
-            throw new HttpsError("failed-precondition", "無法取得折扣碼，請稍後再試。");
-        }
-
-        const discountExpiresAtIso = discountExpiresIsoFromDoc(d);
 
         try {
             await sendMothersDayLuckyDrawEmailFromDocData(
@@ -1030,7 +977,7 @@ exports.resendMothersDay2026LuckyDrawEmail = onCall(
             throw new HttpsError("internal", e.message || String(e));
         }
 
-        return { ok: true, discountExpiresAt: discountExpiresAtIso };
+        return { ok: true };
     }
 );
 
@@ -1618,7 +1565,7 @@ function escapeHtml(s) {
         .replace(/"/g, "&quot;");
 }
 
-/** 母親節抽獎登記成功通知：含海報圖、登記資料、專屬折扣碼 */
+/** 母親節抽獎登記成功通知：含海報圖與登記資料 */
 function buildMothersDayLuckyDrawConfirmationEmailHtml(opts) {
     const {
         origin,
@@ -1629,8 +1576,6 @@ function buildMothersDayLuckyDrawConfirmationEmailHtml(opts) {
         referrerSnapshot,
         prizeSummary,
         drawAnnouncementNote,
-        discountCode,
-        discountExpiryLabel = "",
         emailHeadline = "登記已成功",
         emailBadgeLabel = "母親節限定｜抽獎登記成功",
         emailLeadParagraph,
@@ -1654,16 +1599,11 @@ function buildMothersDayLuckyDrawConfirmationEmailHtml(opts) {
 <h1 style="margin:16px 0 8px;font-size:22px;font-weight:900;color:#ffffff;line-height:1.35;">${esc(emailHeadline)}</h1>
 <p style="margin:0;font-size:14px;color:#a1a1aa;line-height:1.6;">${esc(
         emailLeadParagraph ||
-            "感謝您完成母親節抽獎登記。以下為您的登記摘要與專屬折扣碼（請妥善保存）。折扣碼限登記日起 30 日內使用。"
+            "感謝您完成母親節抽獎登記。以下為您的登記摘要。"
     )}</p>
 </td></tr>
 <tr><td style="padding:0 0 16px;text-align:center;">
 <img src="${esc(posterUrl)}" alt="母親節抽獎活動海報" width="480" style="max-width:100%;height:auto;display:block;border-radius:16px;border:1px solid rgba(185,28,28,0.35);"/>
-</td></tr>
-<tr><td style="background:rgba(250,204,21,0.08);border:1px solid rgba(212,175,55,0.55);border-radius:18px;padding:18px 20px;margin-bottom:16px;">
-<p style="margin:0 0 10px;font-size:13px;font-weight:800;color:#fde047;letter-spacing:0.04em;">您的折扣碼（8 碼英數字）</p>
-<p style="margin:0;font-size:28px;font-weight:900;letter-spacing:0.18em;color:#ffffff;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${esc(discountCode)}</p>
-${discountExpiryLabel ? `<p style="margin:14px 0 0;font-size:13px;color:#fde68a;line-height:1.55;text-align:center;">使用期限：${esc(discountExpiryLabel)} 前有效<br/><span style="font-size:11px;color:#a1a1aa;">（自登記完成時刻起算 30 日）</span></p>` : ""}
 </td></tr>
 <tr><td style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:20px;">
 <h2 style="margin:0 0 14px;font-size:15px;font-weight:800;color:#fda4af;">登記資料</h2>

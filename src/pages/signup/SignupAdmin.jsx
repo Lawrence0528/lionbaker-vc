@@ -4,6 +4,7 @@ import { collection, query, orderBy, getDocs, doc, getDoc, setDoc, deleteDoc, se
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { Copy } from 'lucide-react';
 import {
     SIGNUP_LANDING_COLLECTION,
     SIGNUP_LANDING_DOC_ID,
@@ -87,6 +88,53 @@ const DEFAULT_REFRESHER_MAX = 10;
 const PAYEE_OPTIONS = ['', '嘉吉', '偉志', '白白'];
 const MOTHERS_DAY_DRAW_TOTAL_DURATION_MS = 3800;
 const MOTHERS_DAY_DRAW_SLOW_START_MS = 2500;
+
+const buildDefaultNewSession = () => ({
+    title: 'AI落地師培訓班',
+    date: '',
+    time: '10:00',
+    endTime: '16:00',
+    location: 'TOP SPACE商務中心',
+    address: '臺中市中區民族路23號3樓',
+    price: 3980,
+    originalPrice: 5000,
+    maxCapacity: 20,
+    note: '',
+    isSignupOpen: true,
+    refresherMaxCapacity: DEFAULT_REFRESHER_MAX
+});
+
+const formatDateInputValue = (value) => {
+    if (!value) return '';
+    const raw = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 10);
+};
+
+const formatTimeInputValue = (value, fallback = '10:00') => {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return fallback;
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+const buildCopiedSessionDraft = (session) => ({
+    title: `${String(session?.title || 'AI落地師培訓班').trim()}（複製）`,
+    date: formatDateInputValue(session?.date),
+    time: formatTimeInputValue(session?.date),
+    endTime: session?.endTime || (session?.endDate ? formatTimeInputValue(session.endDate, '') : ''),
+    location: session?.location || '',
+    address: session?.address || '',
+    price: Number(session?.price || 0),
+    originalPrice: Number(session?.originalPrice || 0),
+    maxCapacity: Number(session?.maxCapacity || 20),
+    note: session?.note || '',
+    isSignupOpen: false,
+    refresherMaxCapacity: Number(session?.refresherMaxCapacity) > 0
+        ? Number(session.refresherMaxCapacity)
+        : DEFAULT_REFRESHER_MAX
+});
 
 function randomInt(max) {
     if (!Number.isFinite(max) || max <= 0) return 0;
@@ -226,20 +274,8 @@ const SignupAdmin = () => {
 
     // Modal State: Create Session
     const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
-    const [newSession, setNewSession] = useState({
-        title: 'AI落地師培訓班',
-        date: '',
-        time: '10:00',
-        endTime: '16:00',
-        location: 'TOP SPACE商務中心',
-        address: '臺中市中區民族路23號3樓',
-        price: 3980,
-        originalPrice: 5000,
-        maxCapacity: 20,
-        note: '',
-        isSignupOpen: true,
-        refresherMaxCapacity: DEFAULT_REFRESHER_MAX
-    });
+    const [newSession, setNewSession] = useState(buildDefaultNewSession);
+    const [sessionCopyNotice, setSessionCopyNotice] = useState('');
 
     // Modal State: Edit Session
     const [isEditSessionOpen, setIsEditSessionOpen] = useState(false);
@@ -979,6 +1015,23 @@ const SignupAdmin = () => {
 
     // --- Session Actions ---
 
+    const openCreateSessionModal = () => {
+        setNewSession(buildDefaultNewSession());
+        setSessionCopyNotice('');
+        setIsCreateSessionOpen(true);
+    };
+
+    const closeCreateSessionModal = () => {
+        setIsCreateSessionOpen(false);
+        setSessionCopyNotice('');
+    };
+
+    const openCopySessionModal = (session) => {
+        setNewSession(buildCopiedSessionDraft(session));
+        setSessionCopyNotice(`已拷貝「${session.title || '場次'}」的課程設定；報名名單與正課/複訓人數不會複製，新場次預設關閉報名。`);
+        setIsCreateSessionOpen(true);
+    };
+
     const handleCreateSession = async (e) => {
         e.preventDefault();
         if (!isAdmin) return;
@@ -1002,7 +1055,7 @@ const SignupAdmin = () => {
                     isSignupOpen: newSession.isSignupOpen !== false
                 };
                 setSessions(prev => [created, ...prev]);
-                setIsCreateSessionOpen(false);
+                closeCreateSessionModal();
                 alert('（本地假資料）場次已建立');
                 return;
             }
@@ -1015,12 +1068,14 @@ const SignupAdmin = () => {
                 ...newSession,
                 date: isoDate,
                 endDate: endIsoDate,
+                currentCount: 0,
+                refresherCurrentCount: 0,
                 refresherMaxCapacity: Number(newSession.refresherMaxCapacity) > 0
                     ? Number(newSession.refresherMaxCapacity)
                     : DEFAULT_REFRESHER_MAX
             });
 
-            setIsCreateSessionOpen(false);
+            closeCreateSessionModal();
             fetchSessions(adminEmail);
             alert('場次建立成功');
         } catch (err) {
@@ -2087,7 +2142,7 @@ const SignupAdmin = () => {
                         )}
                     </div>
                     {isAdmin && viewMode === 'sessions' && (
-                        <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition-colors flex items-center gap-2">
+                        <button onClick={openCreateSessionModal} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow transition-colors flex items-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
                             新增場次
                         </button>
@@ -2768,7 +2823,7 @@ const SignupAdmin = () => {
                                     <div className="col-span-full text-center py-20 bg-white rounded-xl shadow-sm border border-dashed border-slate-300">
                                         <p className="text-slate-500 mb-4">目前沒有場次資料</p>
                                         {isAdmin && (
-                                            <button onClick={() => setIsCreateSessionOpen(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">立即建立場次</button>
+                                            <button onClick={openCreateSessionModal} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">立即建立場次</button>
                                         )}
                                     </div>
                                 )}
@@ -2778,9 +2833,26 @@ const SignupAdmin = () => {
                                         <div className="relative">
                                             <div className="flex justify-between items-start mb-2">
                                                 <h3 className="text-xl font-bold text-slate-800">{session.title}</h3>
-                                                <button onClick={(e) => { e.stopPropagation(); openEditSessionModal(session); }} className="text-slate-400 hover:text-blue-600 p-1">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                                </button>
+                                                <div className="flex shrink-0 items-center gap-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); openCopySessionModal(session); }}
+                                                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-emerald-600"
+                                                        title="複製場次設定"
+                                                        aria-label="複製場次設定"
+                                                    >
+                                                        <Copy className="h-4 w-4" />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); openEditSessionModal(session); }}
+                                                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-blue-600"
+                                                        title="編輯場次"
+                                                        aria-label="編輯場次"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                    </button>
+                                                </div>
                                             </div>
                                             <div className="mb-2">
                                                 {session.isSignupOpen !== false ? (
@@ -3394,7 +3466,12 @@ const SignupAdmin = () => {
                 {isAdmin && isCreateSessionOpen && (
                     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
                         <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 animate-fade-in-up max-h-[90vh] overflow-y-auto">
-                            <h3 className="text-xl font-bold text-slate-800 mb-6">新增場次</h3>
+                            <h3 className="text-xl font-bold text-slate-800 mb-2">{sessionCopyNotice ? '複製場次' : '新增場次'}</h3>
+                            {sessionCopyNotice && (
+                                <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-relaxed text-emerald-800">
+                                    {sessionCopyNotice}
+                                </div>
+                            )}
                             <form onSubmit={handleCreateSession} className="space-y-4">
                                 <div><label className="text-xs font-bold text-slate-500 uppercase">標題</label><input type="text" value={newSession.title} onChange={e => setNewSession({ ...newSession, title: e.target.value })} className="w-full border p-2 rounded" /></div>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -3458,7 +3535,7 @@ const SignupAdmin = () => {
                                 </label>
 
                                 <div className="flex gap-3 mt-8 pt-4 border-t">
-                                    <button type="button" onClick={() => setIsCreateSessionOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
+                                    <button type="button" onClick={closeCreateSessionModal} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200">取消</button>
                                     <button type="submit" disabled={opLoading} className="flex-1 py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:opacity-50">{opLoading ? '處理中...' : '建立'}</button>
                                 </div>
                             </form>

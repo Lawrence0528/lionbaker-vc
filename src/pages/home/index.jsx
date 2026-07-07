@@ -37,6 +37,7 @@ const Home = () => {
         needsActivation,
         isBanned,
         isExpired,
+        licenseVerificationEnabled,
         handleAgreeTerms,
         handleSetAlias,
         handleRedeemCode,
@@ -186,7 +187,9 @@ const Home = () => {
                 <>
                     <div className="w-full max-w-5xl flex justify-between mb-4 px-2 items-center">
                         <div className="flex gap-2 items-center flex-wrap">
-                            {userProfile.isSvip ? (
+                            {!licenseVerificationEnabled ? (
+                                <span className="text-sky-500 font-bold border border-sky-400/50 bg-sky-400/10 px-2 py-1 rounded text-xs">課堂模式：免金鑰驗證</span>
+                            ) : userProfile.isSvip ? (
                                 <span className="text-yellow-400 font-bold border border-yellow-500/50 bg-yellow-500/10 px-2 py-1 rounded text-xs">♾️ SVIP</span>
                             ) : userProfile.expiryDate ? (
                                 <span
@@ -201,12 +204,14 @@ const Home = () => {
                                     )
                                 </span>
                             ) : null}
-                            <button
-                                onClick={() => setViewMode('expire_renew')}
-                                className="ml-2 bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 border border-emerald-500/50 px-3 py-1 rounded text-xs transition-all shadow-md"
-                            >
-                                + 輸入金鑰
-                            </button>
+                            {licenseVerificationEnabled && (
+                                <button
+                                    onClick={() => setViewMode('expire_renew')}
+                                    className="ml-2 bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 border border-emerald-500/50 px-3 py-1 rounded text-xs transition-all shadow-md"
+                                >
+                                    + 輸入金鑰
+                                </button>
+                            )}
                         </div>
                     </div>
                     {userProfile?.role === 'SuperAdmin' && (

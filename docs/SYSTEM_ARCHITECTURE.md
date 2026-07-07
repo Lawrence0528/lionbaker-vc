@@ -122,7 +122,7 @@ lionbaker-vc/
 ### 7.1 首頁／專案
 
 1. LIFF 初始化與 LINE Profile（`useLiffVipGate`）。
-2. Firestore `users/{lineUserId}` 同步與 VIP／條款／別名等 gate。
+2. Firestore `users/{lineUserId}` 同步與 VIP／條款／別名等 gate；VIP／到期檢查可由 `system_settings/license_gate.licenseVerificationEnabled` 全域關閉作為課堂模式。
 3. `projects` 依 `userId` 查詢列表；`ProjectEditor` 更新文件（含 `htmlCode`、`projectAlias`、各類型欄位）。
 
 ### 7.2 沙盒預覽

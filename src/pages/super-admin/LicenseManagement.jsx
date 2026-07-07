@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase';
-import { collection, getDocs, query, addDoc, serverTimestamp, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, addDoc, serverTimestamp, orderBy, limit, doc, getDoc, setDoc } from 'firebase/firestore';
 import { copyToClipboard } from '../../utils/clipboard';
+
+const LICENSE_GATE_SETTINGS_COLLECTION = 'system_settings';
+const LICENSE_GATE_SETTINGS_DOC = 'license_gate';
 
 const LicenseManagement = ({ userProfile }) => {
     const [licenses, setLicenses] = useState([]);
     const [genConfig, setGenConfig] = useState({ type: 'VIP_PERSONAL', days: 30, count: 1, validUntil: '' });
     const [generatedKeys, setGeneratedKeys] = useState([]);
+    const [licenseVerificationEnabled, setLicenseVerificationEnabled] = useState(true);
+    const [settingsLoading, setSettingsLoading] = useState(true);
+    const [settingsSaving, setSettingsSaving] = useState(false);
 
     const fetchLicenses = async () => {
         const q = query(collection(db, 'license_keys'), orderBy('createdAt', 'desc'), limit(100));
@@ -14,9 +20,44 @@ const LicenseManagement = ({ userProfile }) => {
         setLicenses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     };
 
+    const fetchLicenseGateSettings = async () => {
+        setSettingsLoading(true);
+        try {
+            const snap = await getDoc(doc(db, LICENSE_GATE_SETTINGS_COLLECTION, LICENSE_GATE_SETTINGS_DOC));
+            setLicenseVerificationEnabled(snap.exists() ? snap.data()?.licenseVerificationEnabled !== false : true);
+        } catch (err) {
+            console.error('讀取金鑰驗證設定失敗', err);
+            setLicenseVerificationEnabled(true);
+        } finally {
+            setSettingsLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchLicenses();
+        fetchLicenseGateSettings();
     }, []);
+
+    const toggleLicenseVerification = async () => {
+        const nextEnabled = !licenseVerificationEnabled;
+        if (!nextEnabled && !window.confirm('確定要關閉金鑰驗證嗎？關閉後使用者可免輸入金鑰進入工具。')) return;
+
+        setSettingsSaving(true);
+        try {
+            await setDoc(doc(db, LICENSE_GATE_SETTINGS_COLLECTION, LICENSE_GATE_SETTINGS_DOC), {
+                licenseVerificationEnabled: nextEnabled,
+                updatedAt: serverTimestamp(),
+                updatedBy: userProfile?.userId || 'unknown',
+            }, { merge: true });
+            setLicenseVerificationEnabled(nextEnabled);
+            alert(nextEnabled ? '已開啟金鑰驗證。' : '已關閉金鑰驗證，課堂模式已啟用。');
+        } catch (err) {
+            console.error('更新金鑰驗證設定失敗', err);
+            alert('更新金鑰驗證設定失敗，請稍後重試。');
+        } finally {
+            setSettingsSaving(false);
+        }
+    };
 
     const generateKeys = async () => {
         if (!window.confirm(`確定要產生 ${genConfig.count} 組 ${genConfig.type} 金鑰 (${genConfig.days} 天) 嗎？`)) return;
@@ -49,6 +90,31 @@ const LicenseManagement = ({ userProfile }) => {
 
     return (
         <div>
+            <div className="mb-8 bg-[#111] p-6 rounded-lg border border-gray-700">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h2 className="text-xl mb-2 text-cyan-300">金鑰驗證開關</h2>
+                        <p className="text-sm text-gray-400 leading-relaxed">
+                            開啟時，未啟用或已到期的使用者需要輸入金鑰；關閉時，使用者可免金鑰進入工具，適合課堂現場使用。
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={toggleLicenseVerification}
+                        disabled={settingsLoading || settingsSaving}
+                        aria-pressed={licenseVerificationEnabled}
+                        className={`w-full md:w-52 rounded-lg border px-4 py-3 text-left transition disabled:opacity-50 ${
+                            licenseVerificationEnabled
+                                ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
+                                : 'border-orange-500/60 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20'
+                        }`}
+                    >
+                        <span className="block text-xs text-gray-400">{settingsSaving ? '更新中' : '目前狀態'}</span>
+                        <span className="block font-bold">{licenseVerificationEnabled ? '驗證開啟' : '驗證關閉'}</span>
+                        <span className="block text-xs mt-1">{licenseVerificationEnabled ? '點擊關閉' : '點擊開啟'}</span>
+                    </button>
+                </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="bg-[#111] p-6 rounded-lg border border-gray-700">
                     <h2 className="text-xl mb-4 text-yellow-500">🔑 金鑰產生器</h2>
